@@ -1,1 +1,6 @@
 /bin/
+
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
