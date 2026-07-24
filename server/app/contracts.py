@@ -98,6 +98,23 @@ class CaptureRecord:
     consent_raw_video: bool = False
 
 
+@dataclass(frozen=True)
+class FatigueAssessment:
+    """Handoff contract for the robot policy bridge (bin/NightWatch 守夜犬！.md)."""
+
+    assessment_id: str
+    ts: float
+    track_id: str
+    anonymous_person_id: str | None
+    bbox: tuple[float, float, float, float] | None
+    fatigue_score: float
+    confidence: float
+    quality: float
+    factors: tuple[str, ...]
+    observation_seconds: float
+    model_version: str
+
+
 def fatigue_frame_to_dict(frame: FatigueFrame) -> dict[str, Any]:
     data = asdict(frame)
     return data
@@ -105,3 +122,11 @@ def fatigue_frame_to_dict(frame: FatigueFrame) -> dict[str, Any]:
 
 def policy_event_to_dict(event: PolicyEvent) -> dict[str, Any]:
     return asdict(event)
+
+
+def fatigue_assessment_to_dict(assessment: FatigueAssessment) -> dict[str, Any]:
+    data = asdict(assessment)
+    data["factors"] = list(assessment.factors)
+    if assessment.bbox is not None:
+        data["bbox"] = list(assessment.bbox)
+    return data

@@ -9,8 +9,38 @@ from collections.abc import Callable
 
 import cv2
 import numpy as np
+import requests
 
 from app.contracts import FatigueFrame
+
+
+def _draw_fatigue_overlay(
+    frame: np.ndarray, fatigue: FatigueFrame, frame_height: int
+) -> None:
+    x1, y1, x2, y2 = fatigue.bbox
+    color = (61, 214, 198) if fatigue.score < 60 else (93, 93, 237)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    cv2.putText(
+        frame,
+        f"RestScore {fatigue.score:.0f}",
+        (x1, max(24, y1 - 10)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        color,
+        2,
+        cv2.LINE_AA,
+    )
+    if fatigue.confidence < 0.5:
+        cv2.putText(
+            frame,
+            "low confidence",
+            (x1, min(frame_height - 12, y2 + 24)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (139, 156, 179),
+            1,
+            cv2.LINE_AA,
+        )
 
 
 class FrameSource(ABC):
@@ -65,7 +95,7 @@ class StubFrameSource(FrameSource):
     def get_annotated_frame(self) -> np.ndarray:
         frame = self._base_frame()
         score = 35 + 25 * (0.5 + 0.5 * math.sin((time.time() - self._start) * 0.4))
-        # self._draw_bbox(frame, score)
+        self._draw_bbox(frame, score)
         cv2.putText(
             frame,
             "STUB CAMERA",
@@ -155,49 +185,130 @@ class WebcamFrameSource(FrameSource):
         return frame.copy()
 
     def _draw_overlay(self, frame: np.ndarray, fatigue: FatigueFrame) -> None:
-        x1, y1, x2, y2 = fatigue.bbox
-        color = (61, 214, 198) if fatigue.score < 60 else (93, 93, 237)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(
-            frame,
-            f"RestScore {fatigue.score:.0f}",
-            (x1, max(24, y1 - 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-        if fatigue.confidence < 0.5:
-            cv2.putText(
-                frame,
-                "low confidence",
-                (x1, min(self.height - 12, y2 + 24)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (139, 156, 179),
-                1,
-                cv2.LINE_AA,
-            )
+        _draw_fatigue_overlay(frame, fatigue, self.height)
 
     def get_pov_frame(self) -> np.ndarray:
         return self._read_frame()
 
     def get_annotated_frame(self) -> np.ndarray:
         frame = self._read_frame()
-        # if self._score_provider is not None:
-        #     fatigue = self._score_provider()
-        #     if fatigue.confidence >= 0.5:
-        #         self._draw_overlay(frame, fatigue)
+        if self._score_provider is not None:
+            fatigue = self._score_provider()
+            if fatigue.confidence >= 0.5 and fatigue.bbox != (0, 0, 0, 0):
+                self._draw_overlay(frame, fatigue)
+        return frame
+
+
+class RobotCameraFrameSource(FrameSource):
+    """Pull MJPEG frames from the robot HTTP camera feed (port 5555)."""
+
+    def __init__(
+        self,
+        url: str,
+        width: int = 960,
+        height: int = 540,
+        score_provider: Callable[[], FatigueFrame] | None = None,
+    ) -> None:
+        self.url = url
+        self.width = width
+        self.height = height
+        self._score_provider = score_provider
+        self._lock = threading.Lock()
+        self._latest_frame: np.ndarray | None = None
+        self._error_message: str | None = "Connecting to robot camera..."
+        self._stopped = False
+        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread.start()
+
+    def _capture_loop(self) -> None:
+        backoff = 1.0
+        buffer = b""
+        while not self._stopped:
+            try:
+                with requests.get(self.url, stream=True, timeout=5) as response:
+                    response.raise_for_status()
+                    backoff = 1.0
+                    self._error_message = None
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if self._stopped:
+                            break
+                        if not chunk:
+                            continue
+                        buffer += chunk
+                        while True:
+                            start = buffer.find(b"\xff\xd8")
+                            end = buffer.find(b"\xff\xd9")
+                            if start == -1 or end == -1 or end <= start:
+                                break
+                            jpeg = buffer[start : end + 2]
+                            buffer = buffer[end + 2 :]
+                            frame = cv2.imdecode(
+                                np.frombuffer(jpeg, dtype=np.uint8),
+                                cv2.IMREAD_COLOR,
+                            )
+                            if frame is None:
+                                continue
+                            frame = cv2.resize(frame, (self.width, self.height))
+                            with self._lock:
+                                self._latest_frame = frame
+            except Exception:  # noqa: BLE001 - reconnect loop
+                self._error_message = "Robot camera unavailable"
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 10.0)
+
+    def close(self) -> None:
+        self._stopped = True
+        self._thread.join(timeout=2.0)
+
+    def _error_frame(self, message: str) -> np.ndarray:
+        frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        frame[:] = (20, 20, 30)
+        cv2.putText(
+            frame,
+            message,
+            (24, self.height // 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (139, 156, 179),
+            2,
+            cv2.LINE_AA,
+        )
+        return frame
+
+    def _read_frame(self) -> np.ndarray:
+        with self._lock:
+            frame = self._latest_frame
+            error = self._error_message
+        if frame is None:
+            return self._error_frame(error or "Waiting for robot camera")
+        return frame.copy()
+
+    def get_pov_frame(self) -> np.ndarray:
+        return self._read_frame()
+
+    def get_annotated_frame(self) -> np.ndarray:
+        frame = self._read_frame()
+        if self._score_provider is not None:
+            fatigue = self._score_provider()
+            if fatigue.confidence >= 0.5 and fatigue.bbox != (0, 0, 0, 0):
+                _draw_fatigue_overlay(frame, fatigue, self.height)
         return frame
 
 
 def create_frame_source(
     camera_source: str,
     score_provider: Callable[[], FatigueFrame] | None = None,
+    robot_camera_url: str | None = None,
 ) -> FrameSource:
     if camera_source == "stub":
         return StubFrameSource()
+
+    if camera_source == "robot":
+        if not robot_camera_url:
+            raise ValueError("robot_camera_url is required when CAMERA_SOURCE=robot")
+        return RobotCameraFrameSource(
+            url=robot_camera_url, score_provider=score_provider
+        )
 
     device: int | str
     if camera_source == "webcam":

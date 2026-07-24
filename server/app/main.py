@@ -12,6 +12,7 @@ from app.services.frame_source import create_frame_source
 from app.services.ledger_memory import LedgerMemory
 from app.services.live_scorer import LiveScoreSource
 from app.services.policy_events import StubPolicyEventSource
+from app.services.robot_bridge import RobotBridge
 from app.services.scorer import StubScoreSource
 
 
@@ -50,9 +51,21 @@ async def lifespan(app: FastAPI):
     app.state.frame_source = create_frame_source(
         settings.camera_source,
         score_provider=app.state.score_source.latest,
+        robot_camera_url=settings.robot_camera_url,
     )
     app.state.policy_source = StubPolicyEventSource()
     app.state.ledger = LedgerMemory()
+
+    robot_bridge: RobotBridge | None = None
+    if settings.robot_bridge_enabled:
+        robot_bridge = RobotBridge(
+            assessment_path=settings.robot_assessment_path,
+            status_url=settings.robot_status_url,
+            window_seconds=settings.robot_assessment_window_seconds,
+            get_latest_frame=app.state.score_source.latest,
+        )
+        app.state.robot_bridge = robot_bridge
+        await robot_bridge.start()
 
     if isinstance(app.state.score_source, LiveScoreSource):
         await app.state.score_source.start()
@@ -68,6 +81,8 @@ async def lifespan(app: FastAPI):
             pass
         if isinstance(app.state.score_source, LiveScoreSource):
             await app.state.score_source.stop()
+        if robot_bridge is not None:
+            await robot_bridge.stop()
         app.state.frame_source.close()
 
 

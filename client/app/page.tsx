@@ -27,8 +27,7 @@ export default function BoothPage() {
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[3fr_2fr]">
         <VideoFeed
-          src="/video_feed/annotated"
-          label="Annotated Feed"
+          label="Live Feed"
           className="min-h-[320px] lg:min-h-0"
         />
 
