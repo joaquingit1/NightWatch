@@ -78,7 +78,7 @@ For sleepers already napping, a separate **breathing check** uses optical flow o
 | --------------- | ------------------------------------------------------------------------------ |
 | Robot           | Unitree Go2 via DimensionalOS (WebRTC)                                         |
 | On-device AI    | Local LLM (Qwen via Ollama) for agent commands; no internet needed in demo     |
-| Vision          | MediaPipe face landmarks + pose, OpenCV                                        |
+| Vision          | YOLOv8-Face detection + MediaPipe face landmarks, OpenCV                       |
 | Fatigue scoring | Interpretable thresholds, with optional learned models trained on venue data   |
 | Breathing       | Optical-flow + frequency analysis on a still sleeper                           |
 | Voice           | Pre-rendered bilingual clips (warm caregiver tone, not runtime text-to-speech) |
@@ -101,6 +101,91 @@ For sleepers already napping, a separate **breathing check** uses optical flow o
 Night Watch was built in 72 hours at China's largest hackathon, among thousands of people who had not slept enough to build a product about sleep. The demo is the product: a dog that patrols real nappers, records real wakes, and publishes real data from the venue.
 
 If you are a judge, sponsor, or visitor at the booth: ask for the live loop, the ledger timeline, or the engineering wall. We are happy to walk through what we measured, what we trained, and what we chose not to claim.
+
+---
+
+## Development (client + server + fatigue detection service)
+
+The booth stack is three independently run pieces:
+
+| Service | Path | Port | Role |
+| --- | --- | --- | --- |
+| **Booth UI** | `client/` (Next.js) | 3000 | Live video, RestScore, thought ticker, ledger |
+| **Policy API** | `server/` (FastAPI) | 8000 | Care loop, ledger, camera capture, proxies fatigue data to the UI |
+| **Fatigue detection** | `fatigue_fastapi_service/` (FastAPI) | 8001 | Real YOLOv8-Face + MediaPipe perception (EAR/MAR/PERCLOS/head-pose) over WebSocket |
+
+`server/` can run standalone with a scripted stub score (`SCORER_BACKEND=stub`, the default) or stream real webcam frames to the fatigue detection service for live scoring (`SCORER_BACKEND=live`). The stub needs no extra setup; live mode requires the fatigue service to be running first.
+
+**Recommended:** develop on **native Windows** (`C:\Users\...\NightWatch`) for faster file I/O and simpler `pnpm`/`uv` tooling. Keep the repo on an NTFS path, not under `\\wsl$\...`.
+
+**DimOS / Go2 robot work** still requires **WSL Ubuntu** when you integrate the real dog. The web UI and both FastAPI services run fine on Windows alone.
+
+### Prerequisites (Windows)
+
+- [Node.js 20+](https://nodejs.org/) with [pnpm](https://pnpm.io/) (`corepack enable`)
+- [Python 3.12](https://www.python.org/) for `server/` (with [uv](https://docs.astral.sh/uv/) if available, or a plain `venv`)
+- **Python 3.12** (not 3.13) for `fatigue_fastapi_service/` — MediaPipe does not ship 3.13 wheels yet
+
+### Run locally (Windows PowerShell)
+
+Terminal 1 — fatigue detection service (port 8001), only needed for `SCORER_BACKEND=live`:
+
+```powershell
+cd fatigue_fastapi_service
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:FATIGUE_DEVICE = "cpu"   # or "auto"/"mps"/"cuda:0" if you have a GPU
+cd ..
+.\fatigue_fastapi_service\.venv\Scripts\python.exe -m uvicorn fatigue_fastapi_service.app.main:app --host 127.0.0.1 --port 8001 --workers 1
+```
+
+`--workers 1` is required: the engine only tracks one active detection stream per process. See `fatigue_fastapi_service/README.md` for CPU-only PyTorch install notes (avoids pulling a large CUDA wheel) and the full WebSocket protocol.
+
+Terminal 2 — policy API (port 8000):
+
+```powershell
+cd server
+uv sync   # or: python -m venv .venv; .\.venv\Scripts\pip install -r requirements.txt
+Copy-Item .env.example .env.local -ErrorAction SilentlyContinue
+# edit .env.local and set SCORER_BACKEND=live to use Terminal 1's real detection
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 3 --env-file .env.local
+```
+
+Terminal 3 — booth UI (port 3000):
+
+```powershell
+cd client
+Copy-Item .env.local.example .env.local -ErrorAction SilentlyContinue
+pnpm install
+pnpm dev
+```
+
+Open `http://localhost:3000`. Next.js rewrites `/api/*`, `/video_feed/*`, and `/text_stream/*` to the FastAPI server.
+
+### Verify everything
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8001/health -UseBasicParsing   # fatigue service (if running)
+Invoke-WebRequest http://127.0.0.1:8000/api/score -UseBasicParsing
+Invoke-WebRequest http://localhost:3000 -UseBasicParsing
+```
+
+### API endpoints (C5 contract)
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/video_feed/pov` | GET | Raw camera MJPEG |
+| `/video_feed/annotated` | GET | Annotated fatigue overlay MJPEG |
+| `/text_stream/thoughts` | GET | SSE stream of policy events |
+| `/api/score` | GET | Latest fatigue frame JSON |
+| `/api/plan` | GET | Scheduler route with ETAs |
+| `/api/ledger` | GET | Nap timeline |
+| `/api/leaderboard` | GET | Fatigue leaderboard |
+| `/api/adopt` | POST | Adoption form |
+| `/api/capture` | POST | Capture session upload |
+| `/api/outcome` | POST | Post-wake survey |
+
+Stub implementations ship by default (`DEMO_MODE=stub`). Swap services in `server/app/services/` when perception, policy, and robot modules are ready.
 
 ---
 
