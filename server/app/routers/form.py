@@ -15,15 +15,6 @@ MAX_SUBMISSIONS_PER_HOUR = 10
 FORM_SCHEMA: dict[str, Any] = {
     "questions": [
         {
-            "id": "consent_analysis",
-            "prompt_zh": "同意进行疲劳分析吗？",
-            "prompt_en": "Consent to fatigue analysis?",
-            "options": [
-                {"value": True, "label_zh": "同意", "label_en": "Yes"},
-                {"value": False, "label_zh": "不同意", "label_en": "No"},
-            ],
-        },
-        {
             "id": "tiredness",
             "prompt_zh": "你现在感觉如何？",
             "prompt_en": "How do you feel right now?",
@@ -34,11 +25,11 @@ FORM_SCHEMA: dict[str, Any] = {
         },
         {
             "id": "wants_escort",
-            "prompt_zh": "要我带你去休息区吗？",
-            "prompt_en": "Guide you to the rest area?",
+            "prompt_zh": "要我带你去休息吗？",
+            "prompt_en": "Would you like me to take you somewhere to rest?",
             "options": [
-                {"value": True, "label_zh": "好的，带我去", "label_en": "Yes, please"},
-                {"value": False, "label_zh": "暂时不用", "label_en": "Not now"},
+                {"value": True, "label_zh": "好的，带我去", "label_en": "Yes"},
+                {"value": False, "label_zh": "不用了，谢谢", "label_en": "No"},
             ],
         },
     ]

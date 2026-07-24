@@ -91,12 +91,10 @@ class IntakeDatabase:
         name_alias: str | None = None,
         source: str = "qr_form",
     ) -> IntakeResponse:
-        if not consent_analysis:
-            status: IntakeStatus = "declined"
-            wants_escort = False
-            tiredness = "energized"
-        elif wants_escort:
-            status = "pending"
+        if wants_escort:
+            status: IntakeStatus = "pending"
+        elif not consent_analysis:
+            status = "declined"
         else:
             status = "pending"
 
@@ -188,8 +186,8 @@ class IntakeDatabase:
 def routing_hint(
     consent_analysis: bool, wants_escort: bool
 ) -> Literal["escort", "observe", "declined"]:
-    if not consent_analysis:
-        return "declined"
     if wants_escort:
         return "escort"
+    if not consent_analysis:
+        return "declined"
     return "observe"

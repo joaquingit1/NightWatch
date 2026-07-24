@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { IntakeQuestion } from "@/components/IntakeQuestion";
@@ -7,10 +8,10 @@ import {
   fetchIntakeSchema,
   submitIntake,
   type IntakeQuestion as IntakeQuestionType,
-  type IntakeResponse,
 } from "@/lib/intake";
 
-type Step = "loading" | "questions" | "nickname" | "submitting" | "done" | "error";
+type Step = "loading" | "questions" | "submitting" | "done" | "error";
+type Outcome = "coding" | "escort" | "rest";
 
 function getSessionFromUrl(searchParams: URLSearchParams): string | undefined {
   const raw = searchParams.get("s");
@@ -24,8 +25,7 @@ export function IntakeFormContent() {
   const [questions, setQuestions] = useState<IntakeQuestionType[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, boolean | string>>({});
-  const [nameAlias, setNameAlias] = useState("");
-  const [result, setResult] = useState<IntakeResponse | null>(null);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
@@ -39,7 +39,9 @@ export function IntakeFormContent() {
         setStep("questions");
       } catch {
         if (active) {
-          setErrorMessage("无法加载表单，请稍后重试。");
+          setErrorMessage(
+            "无法加载表单，请稍后重试。 / Unable to load the form. Please try again later.",
+          );
           setStep("error");
         }
       }
@@ -53,20 +55,20 @@ export function IntakeFormContent() {
   const currentQuestion = questions[questionIndex];
 
   const submitForm = useCallback(
-    async (finalAnswers: Record<string, boolean | string>, alias: string | null) => {
+    async (finalAnswers: Record<string, boolean | string>, nextOutcome: Outcome) => {
       setStep("submitting");
       try {
-        const response = await submitIntake({
+        await submitIntake({
           session_id: sessionId,
-          consent_analysis: Boolean(finalAnswers.consent_analysis),
+          consent_analysis: false,
           tiredness: (finalAnswers.tiredness as "energized" | "tired") ?? "energized",
           wants_escort: Boolean(finalAnswers.wants_escort),
-          name_alias: alias,
+          name_alias: null,
         });
-        setResult(response);
+        setOutcome(nextOutcome);
         setStep("done");
       } catch {
-        setErrorMessage("提交失败，请重试。");
+        setErrorMessage("提交失败，请重试。 / Submission failed. Please try again.");
         setStep("error");
       }
     },
@@ -79,54 +81,73 @@ export function IntakeFormContent() {
     setAnswers(nextAnswers);
 
     window.setTimeout(() => {
-      if (currentQuestion.id === "consent_analysis" && value === false) {
-        submitForm(nextAnswers, null);
+      if (currentQuestion.id === "tiredness" && value === "energized") {
+        submitForm(nextAnswers, "coding");
         return;
       }
-      if (questionIndex + 1 >= questions.length) {
-        if (nextAnswers.consent_analysis === true) {
-          setStep("nickname");
-        } else {
-          submitForm(nextAnswers, null);
-        }
+      if (currentQuestion.id === "wants_escort") {
+        submitForm(nextAnswers, value === true ? "escort" : "rest");
         return;
       }
       setQuestionIndex((index) => index + 1);
     }, 280);
   };
 
-  const progressDots = useMemo(() => {
-    if (step === "nickname") return questions.length;
-    return questionIndex;
-  }, [questionIndex, questions.length, step]);
+  const progressDots = useMemo(() => questionIndex, [questionIndex]);
+
+  const displayStep = Math.min(
+    questions.length || 2,
+    step === "submitting" || step === "done"
+      ? questions.length || 2
+      : questionIndex + 1,
+  );
+  const displayTotal = questions.length || 2;
 
   return (
-    <main className="min-h-screen bg-booth-bg px-4 py-8">
-      <div className="mx-auto flex w-full max-w-lg flex-col gap-6">
-        <header className="text-center space-y-2 animate-slide-up">
-          <h1 className="text-3xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-booth-text to-booth-accent">
-            守夜犬 <span className="text-booth-accent font-light">Night Watch</span>
-          </h1>
-          <p className="text-sm text-booth-muted">休息登记 · Rest intake</p>
+    <main className="intake-page">
+      <Image
+        alt=""
+        aria-hidden="true"
+        className="intake-background-layer"
+        fill
+        priority
+        sizes="100vw"
+        src="/form/nightwatch-paper-bg.png"
+      />
+      <div className="intake-paper-grain" aria-hidden="true" />
+      <span className="intake-target intake-target--top" aria-hidden="true" />
+      <span className="intake-target intake-target--bottom" aria-hidden="true" />
+
+      <div className="intake-poster">
+        <header className="intake-brand">
+          <h1 className="intake-brand-zh">守夜犬</h1>
+          <p className="intake-brand-en">NIGHT&nbsp; WATCH</p>
         </header>
 
-        <section className="glass-panel flex min-h-[420px] flex-col justify-between rounded-2xl p-6 sm:p-8">
+        <section className={`intake-panel intake-panel--${step}`} aria-live="polite">
+          <div className="intake-panel-topline">
+            <span>休息登记 / REST INTAKE</span>
+            <span>
+              第 {String(displayStep).padStart(2, "0")} 题 / Q.{" "}
+              {String(displayStep).padStart(2, "0")} /{" "}
+              {String(displayTotal).padStart(2, "0")}
+            </span>
+          </div>
+
           {step === "loading" && (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-booth-muted">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-booth-accent border-t-transparent" />
-              <p className="text-sm">加载中...</p>
+            <div className="intake-state intake-state--center">
+              <div className="intake-loader" aria-hidden="true" />
+              <p>加载中 / LOADING</p>
             </div>
           )}
 
           {step === "questions" && currentQuestion && (
             <>
-              <div className="mb-6 flex justify-center gap-2">
+              <div className="intake-progress" aria-label={`Question ${questionIndex + 1} of ${questions.length}`}>
                 {questions.map((question, index) => (
                   <span
                     key={question.id}
-                    className={`h-2 w-2 rounded-full transition-colors ${
-                      index <= progressDots ? "bg-booth-accent" : "bg-slate-200"
-                    }`}
+                    className={index <= progressDots ? "is-active" : ""}
                   />
                 ))}
               </div>
@@ -144,93 +165,82 @@ export function IntakeFormContent() {
             </>
           )}
 
-          {step === "nickname" && (
-            <div className="animate-slide-up space-y-6 text-center">
-              <div className="space-y-2">
-                <h2 className="text-2xl font-bold text-booth-text">怎么称呼你？</h2>
-                <p className="text-sm text-booth-muted">Optional nickname for the dog</p>
-              </div>
-              <input
-                type="text"
-                value={nameAlias}
-                onChange={(event) => setNameAlias(event.target.value)}
-                placeholder="昵称 / nickname"
-                maxLength={32}
-                className="w-full rounded-xl border border-booth-border bg-white px-4 py-3 text-center text-lg outline-none focus:border-booth-accent focus:ring-2 focus:ring-booth-accent/20"
-              />
-              <div className="flex flex-col gap-3">
-                <button
-                  type="button"
-                  onClick={() => submitForm(answers, nameAlias.trim() || null)}
-                  className="rounded-xl bg-booth-accent px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-600"
-                >
-                  提交 Submit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => submitForm(answers, null)}
-                  className="rounded-xl border border-booth-border px-4 py-3 text-sm font-medium text-booth-muted transition hover:bg-slate-50"
-                >
-                  跳过 Skip
-                </button>
-              </div>
-            </div>
-          )}
-
           {step === "submitting" && (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-booth-muted">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-booth-accent border-t-transparent" />
-              <p className="text-sm">提交中...</p>
+            <div className="intake-state intake-state--center">
+              <div className="intake-loader" aria-hidden="true" />
+              <p>提交中 / SUBMITTING</p>
             </div>
           )}
 
-          {step === "done" && result && (
-            <div className="animate-slide-up flex flex-1 flex-col items-center justify-center gap-4 text-center">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          {step === "done" && outcome && (
+            <div className="intake-state intake-state--done">
+              <div className="intake-done-mark">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              {result.routing_hint === "escort" ? (
+              {outcome === "coding" ? (
                 <>
-                  <h2 className="text-2xl font-bold text-booth-text">守夜犬马上来找你</h2>
-                  <p className="text-sm text-booth-muted">
-                    Night Watch is on the way to guide you to the rest area.
-                  </p>
+                  <h2>耶耶祝你 coding 顺利！</h2>
+                  <p>Yeye wishes you smooth coding!</p>
                 </>
-              ) : result.routing_hint === "observe" ? (
+              ) : outcome === "escort" ? (
                 <>
-                  <h2 className="text-2xl font-bold text-booth-text">感谢参与</h2>
-                  <p className="text-sm text-booth-muted">
-                    We will keep an eye on you. Rest when you need to.
-                  </p>
+                  <h2>好的，耶耶将带你去睡眠空间</h2>
+                  <p>All right, Yeye will guide you to the sleep space.</p>
                 </>
               ) : (
                 <>
-                  <h2 className="text-2xl font-bold text-booth-text">已记录</h2>
-                  <p className="text-sm text-booth-muted">Thanks. No analysis will be performed.</p>
+                  <h2>好的，耶耶提醒你注意休息哦～</h2>
+                  <p>All right, Yeye reminds you to take care and get some rest.</p>
                 </>
               )}
             </div>
           )}
 
           {step === "error" && (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-              <p className="text-booth-danger">{errorMessage}</p>
+            <div className="intake-state intake-state--error">
+              <span className="intake-error-code">ERR / 503</span>
+              <h2>连接中断 / CONNECTION LOST</h2>
+              <p>{errorMessage}</p>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="rounded-xl bg-booth-accent px-4 py-2 text-sm font-semibold text-white"
+                className="intake-action intake-action--primary"
               >
-                重试 Retry
+                <span>重试 / RETRY</span>
+                <span aria-hidden="true">→</span>
               </button>
             </div>
           )}
         </section>
 
-        <p className="text-center text-xs text-booth-muted">
-          扫码参与 · Scan to join · No login required
-        </p>
+        <aside className="intake-machine-spec" aria-label="Robot platform">
+          <p>UNITREE GO2 AIR</p>
+          <span />
+          <p>POWERED BY<br />DIMENSIONAL OS</p>
+        </aside>
+
+        <div className="intake-robot-layer" aria-hidden="true">
+          <Image
+            src="/form/nightwatch-robot-dog.png"
+            alt=""
+            width={1024}
+            height={1536}
+            priority
+            sizes="(max-width: 520px) 145vw, (max-width: 840px) 132vw, 58vw"
+          />
+        </div>
+
+        <footer className="intake-footer">
+          <div className="intake-step-label">
+            <span>休息登记 / REST INTAKE /</span>
+            <strong>{String(displayStep).padStart(2, "0")}</strong>
+            <i>—</i>
+            <b>{String(displayTotal).padStart(2, "0")}</b>
+          </div>
+          <p>扫码 / 回答 / 休息 &nbsp; SCAN / ANSWER / REST</p>
+        </footer>
       </div>
     </main>
   );
