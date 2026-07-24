@@ -6,3 +6,4 @@ opencv-python-headless>=4.10.0
 numpy>=2.0.0
 pydantic>=2.9.0
 websockets>=13.0,<15
+requests>=2.32.0
