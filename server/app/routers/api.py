@@ -43,7 +43,8 @@ async def get_score(request: Request) -> dict[str, Any]:
 
 @router.get("/plan")
 async def get_plan(request: Request) -> dict[str, Any]:
-    return request.app.state.ledger.get_plan()
+    pending = request.app.state.intake_db.list_pending_escort()
+    return request.app.state.ledger.build_plan(pending)
 
 
 @router.get("/ledger")

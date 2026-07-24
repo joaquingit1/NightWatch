@@ -30,7 +30,25 @@ def _draw_fatigue_overlay(
         2,
         cv2.LINE_AA,
     )
-    if fatigue.confidence < 0.5:
+    posture_parts: list[str] = []
+    if fatigue.factors.slump_deg >= 8:
+        posture_parts.append(f"pitch {fatigue.factors.slump_deg:.0f}")
+    if fatigue.factors.nod_count > 0:
+        posture_parts.append(f"nod x{fatigue.factors.nod_count}")
+    if fatigue.factors.yawn_count > 0:
+        posture_parts.append(f"yawn x{fatigue.factors.yawn_count}")
+    if posture_parts:
+        cv2.putText(
+            frame,
+            " · ".join(posture_parts),
+            (x1, min(frame_height - 12, y2 + 22)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (139, 156, 179),
+            1,
+            cv2.LINE_AA,
+        )
+    elif fatigue.confidence < 0.5:
         cv2.putText(
             frame,
             "low confidence",
@@ -194,13 +212,13 @@ class WebcamFrameSource(FrameSource):
         frame = self._read_frame()
         if self._score_provider is not None:
             fatigue = self._score_provider()
-            if fatigue.confidence >= 0.5 and fatigue.bbox != (0, 0, 0, 0):
+            if fatigue.confidence >= 0.15 and fatigue.bbox != (0, 0, 0, 0):
                 self._draw_overlay(frame, fatigue)
         return frame
 
 
-class RobotCameraFrameSource(FrameSource):
-    """Pull MJPEG frames from the robot HTTP camera feed (port 5555)."""
+class MjpegFrameSource(FrameSource):
+    """Pull MJPEG frames from an HTTP multipart stream (robot or Insta360 bridge)."""
 
     def __init__(
         self,
@@ -290,25 +308,31 @@ class RobotCameraFrameSource(FrameSource):
         frame = self._read_frame()
         if self._score_provider is not None:
             fatigue = self._score_provider()
-            if fatigue.confidence >= 0.5 and fatigue.bbox != (0, 0, 0, 0):
+            if fatigue.confidence >= 0.15 and fatigue.bbox != (0, 0, 0, 0):
                 _draw_fatigue_overlay(frame, fatigue, self.height)
         return frame
+
+
+RobotCameraFrameSource = MjpegFrameSource
 
 
 def create_frame_source(
     camera_source: str,
     score_provider: Callable[[], FatigueFrame] | None = None,
     robot_camera_url: str | None = None,
+    insta360_mjpeg_url: str | None = None,
 ) -> FrameSource:
     if camera_source == "stub":
         return StubFrameSource()
 
+    if camera_source == "insta360":
+        url = insta360_mjpeg_url or "http://127.0.0.1:5556/video"
+        return MjpegFrameSource(url=url, score_provider=score_provider)
+
     if camera_source == "robot":
         if not robot_camera_url:
             raise ValueError("robot_camera_url is required when CAMERA_SOURCE=robot")
-        return RobotCameraFrameSource(
-            url=robot_camera_url, score_provider=score_provider
-        )
+        return MjpegFrameSource(url=robot_camera_url, score_provider=score_provider)
 
     device: int | str
     if camera_source == "webcam":

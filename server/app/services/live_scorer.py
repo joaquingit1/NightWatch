@@ -53,7 +53,23 @@ def _map_result(payload: dict) -> FatigueFrame:
     state = primary.get("state") or {}
     bbox = primary.get("bbox") or {}
     calibrating = bool(primary.get("calibrating", False))
+    landmarks_detected = bool(primary.get("landmarks_detected", False))
     head_pitch = state.get("head_pitch")
+
+    confidence = float(bbox.get("confidence", 0.0))
+    if landmarks_detected:
+        confidence = max(confidence, 0.55)
+
+    if not landmarks_detected:
+        calib_state = "uncalibrated"
+    elif calibrating:
+        calib_state = "quick"
+    else:
+        calib_state = "full"
+
+    slump_deg = 0.0
+    if head_pitch is not None and head_pitch < 0:
+        slump_deg = abs(float(head_pitch))
 
     return FatigueFrame(
         ts=ts,
@@ -65,19 +81,19 @@ def _map_result(payload: dict) -> FatigueFrame:
             int(bbox.get("y2", 0)),
         ),
         score=float(state.get("fatigue_score", 0.0)),
-        confidence=float(bbox.get("confidence", 0.0)),
-               factors=FatigueFactors(
-                   perclos=float(state.get("perclos", 0.0)),
-                   blink_ms_p50=float(state.get("blink_duration_ms_p50", 0.0)),
-                   blink_ms_p90=float(state.get("blink_duration_ms_p90", 0.0)),
-                   nod_count=int(state.get("nod_count", 0)),
-                   yawn_count=int(state.get("yawn_count", 0)),
-                   slump_deg=abs(float(head_pitch)) if head_pitch is not None else 0.0,
-                   eye_cnn_perclos=-1.0,
-                   movement_entropy=float(state.get("movement_entropy", 0.0)),
-                   sedentary_hours=float(state.get("sedentary_hours", 0.0)),
-               ),
-        calib_state="quick" if calibrating else "full",
+        confidence=confidence,
+        factors=FatigueFactors(
+            perclos=float(state.get("perclos", 0.0)),
+            blink_ms_p50=float(state.get("blink_duration_ms_p50", 0.0)),
+            blink_ms_p90=float(state.get("blink_duration_ms_p90", 0.0)),
+            nod_count=int(state.get("nod_count", 0)),
+            yawn_count=int(state.get("yawn_count", 0)),
+            slump_deg=slump_deg,
+            eye_cnn_perclos=-1.0,
+            movement_entropy=float(state.get("movement_entropy", 0.0)),
+            sedentary_hours=float(state.get("sedentary_hours", 0.0)),
+        ),
+        calib_state=calib_state,
         scorer="fatigue_fastapi_service",
     )
 
