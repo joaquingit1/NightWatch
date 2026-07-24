@@ -3,15 +3,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 interface VideoFeedProps {
-  src: string;
+  src?: string;
+  povSrc?: string;
+  annotatedSrc?: string;
   label: string;
   className?: string;
+  defaultShowOverlay?: boolean;
 }
 
-export function VideoFeed({ src, label, className = "" }: VideoFeedProps) {
+export function VideoFeed({
+  src,
+  povSrc = "/video_feed/pov",
+  annotatedSrc = "/video_feed/annotated",
+  label,
+  className = "",
+  defaultShowOverlay = true,
+}: VideoFeedProps) {
+  const [showOverlay, setShowOverlay] = useState(defaultShowOverlay);
+  const baseSrc = src ?? (showOverlay ? annotatedSrc : povSrc);
   const imgRef = useRef<HTMLImageElement>(null);
   const [reconnecting, setReconnecting] = useState(false);
-  const [feedSrc, setFeedSrc] = useState(src);
+  const [feedSrc, setFeedSrc] = useState(baseSrc);
 
   // multipart/x-mixed-replace MJPEG streams only fire a single `load` event
   // for the initial connection, not per-frame -- so we can't use `onLoad` as
@@ -21,15 +33,15 @@ export function VideoFeed({ src, label, className = "" }: VideoFeedProps) {
   // tearing down and restarting a perfectly healthy stream every few
   // seconds, which is what caused the visible flicker.
   const bumpSrc = useCallback(() => {
-    const separator = src.includes("?") ? "&" : "?";
-    setFeedSrc(`${src}${separator}t=${Date.now()}`);
+    const separator = baseSrc.includes("?") ? "&" : "?";
+    setFeedSrc(`${baseSrc}${separator}t=${Date.now()}`);
     setReconnecting(true);
-  }, [src]);
+  }, [baseSrc]);
 
   useEffect(() => {
-    setFeedSrc(src);
+    setFeedSrc(baseSrc);
     setReconnecting(false);
-  }, [src]);
+  }, [baseSrc]);
 
   const handleLoad = () => {
     setReconnecting(false);
@@ -41,6 +53,22 @@ export function VideoFeed({ src, label, className = "" }: VideoFeedProps) {
 
   return (
     <div className={`relative overflow-hidden rounded-xl glass-panel ${className}`}>
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+        {!src && (
+          <button
+            type="button"
+            onClick={() => setShowOverlay((value) => !value)}
+            className={`rounded-md px-2.5 py-1 text-[10px] font-bold border shadow-sm backdrop-blur-md transition-colors ${
+              showOverlay
+                ? "bg-booth-accent/10 text-booth-accent border-booth-accent/40"
+                : "bg-white/90 text-booth-muted border-booth-border"
+            }`}
+            aria-pressed={showOverlay}
+          >
+            {showOverlay ? "Overlay on" : "Overlay off"}
+          </button>
+        )}
+      </div>
       <div className="absolute left-3 top-3 z-10 rounded-md bg-white/90 px-2.5 py-1 text-[10px] font-bold text-booth-accent border border-booth-border shadow-sm backdrop-blur-md flex items-center gap-2">
         <span className="w-1.5 h-1.5 rounded-full bg-booth-danger animate-pulse"></span>
         {label}
