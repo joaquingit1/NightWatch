@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { LeaderboardResponse, LedgerResponse } from "@/lib/types";
+import type { LedgerResponse } from "@/lib/types";
 
 const POLL_MS = 3000;
 
@@ -17,42 +17,34 @@ function getStateTextColor(state: string) {
     case "WAKE_LADDER":
     case "CELEBRATE":
     case "NAP_REGISTERED":
-      return "text-emerald-600";
+      return "text-booth-success";
     case "TRIAGE":
     case "DIAGNOSE":
     case "PRESCRIBE":
-      return "text-blue-600";
+      return "text-booth-accent";
     case "ESCORT":
     case "PATROL":
     case "APPROACH":
-      return "text-purple-600";
+      return "text-booth-text";
     case "ESTOP":
     case "DETER":
-      return "text-amber-600";
+      return "text-booth-warn";
     default:
-      return "text-slate-500";
+      return "text-booth-muted";
   }
 }
 
 export function LedgerPanel() {
   const [ledger, setLedger] = useState<LedgerResponse | null>(null);
-  const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
-  const [showLeaderboard, setShowLeaderboard] = useState(true);
 
   useEffect(() => {
     let active = true;
 
     const poll = async () => {
       try {
-        const [ledgerRes, boardRes] = await Promise.all([
-          fetch("/api/ledger", { cache: "no-store" }),
-          fetch("/api/leaderboard", { cache: "no-store" }),
-        ]);
-        if (ledgerRes.ok && active) {
-          setLedger((await ledgerRes.json()) as LedgerResponse);
-        }
-        if (boardRes.ok && active) {
-          setLeaderboard((await boardRes.json()) as LeaderboardResponse);
+        const res = await fetch("/api/ledger", { cache: "no-store" });
+        if (res.ok && active) {
+          setLedger((await res.json()) as LedgerResponse);
         }
       } catch {
         // silent retry
@@ -61,54 +53,67 @@ export function LedgerPanel() {
 
     poll();
     const timer = window.setInterval(poll, POLL_MS);
-    const rotate = window.setInterval(() => setShowLeaderboard((v) => !v), 8000);
     return () => {
       active = false;
       window.clearInterval(timer);
-      window.clearInterval(rotate);
     };
   }, []);
 
   return (
-    <section 
-      className="rounded-xl glass-panel p-4 animate-slide-up overflow-hidden relative"
-      style={{ animationDelay: '300ms' }}
-    >
-      <h2 className="mb-3 text-xs font-bold text-booth-muted/80">
-        {showLeaderboard ? "排行榜 Leaderboard" : "账本 Ledger"}
-      </h2>
-      {showLeaderboard ? (
-        <div className="space-y-2 animate-slide-up">
-          {(leaderboard?.entries ?? []).map((entry, i) => (
-            <div key={entry.name_alias} className={`flex items-center justify-between text-sm rounded-md px-2 py-1.5 transition-colors ${i < 3 ? 'bg-blue-50 border border-booth-accent/20 font-medium text-booth-text' : 'text-booth-muted hover:bg-slate-50 hover:text-booth-text/90'}`}>
-              <span className="flex items-center gap-2">
-                <span className={`w-5 text-center ${i < 3 ? 'text-booth-accent font-bold' : 'text-booth-muted/50'}`}>#{i + 1}</span>
-                {entry.name_alias}
-              </span>
-              <span className={i < 3 ? 'text-booth-accent font-semibold' : 'text-booth-muted'}>
-                {entry.peak_score} <span className="opacity-50 font-normal">· {entry.nap_count} naps</span>
-              </span>
+    <section className="nw-panel overflow-hidden">
+      <div className="nw-panel-header">
+        <span className="nw-kicker">06 / Care ledger</span>
+        <span className="font-data text-[9px] text-booth-muted">
+          local session
+        </span>
+      </div>
+      <div>
+        <div className="grid grid-cols-2 divide-x divide-booth-border border-b border-booth-border bg-booth-panel-strong">
+          <div className="px-3 py-2.5">
+            <div className="nw-kicker !text-[8px]">Naps</div>
+            <div className="font-data mt-1 text-xl font-semibold">
+              {(ledger?.nap_count ?? 0).toString().padStart(2, "0")}
+            </div>
+          </div>
+          <div className="px-3 py-2.5">
+            <div className="nw-kicker !text-[8px]">Passes</div>
+            <div className="font-data mt-1 text-xl font-semibold">
+              {(ledger?.pass_count ?? 0).toString().padStart(2, "0")}
+            </div>
+          </div>
+        </div>
+        {(ledger?.active_naps ?? []).map((nap) => (
+          <div
+            key={nap.nap_id}
+            className="flex items-center justify-between border-b border-booth-border bg-[#e7f4ef] px-3 py-2 font-data text-[9px]"
+          >
+            <span className="font-semibold text-booth-success">
+              {nap.name_alias.toUpperCase()} / RESTING
+            </span>
+            <span className="text-booth-success">
+              CHECK {Math.ceil(nap.remaining_s / 60)}M
+            </span>
+          </div>
+        ))}
+        <div className="max-h-12 divide-y divide-booth-border overflow-y-auto bg-booth-panel-strong">
+          {(ledger?.events ?? []).slice(-8).reverse().map((ev, i) => (
+            <div
+              key={`${ev.ts}-${i}`}
+              className="truncate px-3 py-1.5 font-data text-[8px] text-booth-muted"
+            >
+              <span className={`font-bold ${getStateTextColor(ev.state)}`}>
+                {formatState(ev.state)}
+              </span>{" "}
+              <span className="ml-1">{ev.detail.split("|")[0]}</span>
             </div>
           ))}
-          {!leaderboard?.entries?.length && (
-            <p className="text-sm text-booth-muted px-2 italic">暂无领养者 | No adopters yet</p>
+          {!ledger?.events?.length && (
+            <p className="px-3 py-4 font-data text-[9px] uppercase tracking-[0.06em] text-booth-muted">
+              No care events recorded
+            </p>
           )}
         </div>
-      ) : (
-        <div className="space-y-3 animate-slide-up">
-          <div className="flex gap-4 text-xs font-semibold text-booth-text/70 bg-slate-50 rounded-md p-2 border border-booth-border/50">
-            <span>Naps: {ledger?.nap_count ?? 0}</span>
-            <span>Passes: {ledger?.pass_count ?? 0}</span>
-          </div>
-          <div className="max-h-32 space-y-1 overflow-y-auto text-xs">
-            {(ledger?.events ?? []).slice(-8).reverse().map((ev, i) => (
-              <div key={`${ev.ts}-${i}`} className="text-booth-muted">
-                <span className={`font-bold ${getStateTextColor(ev.state)}`}>{formatState(ev.state)}</span> <span className="ml-1">{ev.detail}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      </div>
     </section>
   );
 }

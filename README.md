@@ -3,7 +3,12 @@
 **每个 AI 都想让你更努力。它想让你休息。**  
 _Every AI makes you work more. This one makes you stop._
 
-An autonomous robot dog that patrols, spots when people are running on empty, escorts them to nap, guards their sleep like a night nurse, and wakes them gently when it is time. Built for [AdventureX 2026](https://adventurex.org) · Theme: **Reverse** · `#adventurex2026`
+An autonomous robot dog that patrols, spots when people are running on empty,
+and escorts them to a recognized sleeping area. The current demo records the
+nap and schedules a visible wake-check deadline; breathing verification and an
+automatic wake ladder remain follow-on work rather than booth claims. Built
+for [AdventureX 2026](https://adventurex.org) · Theme: **Reverse** ·
+`#adventurex2026`
 
 ---
 
@@ -24,9 +29,9 @@ Everything runs locally on laptops over a private network. No cloud required for
 | **Diagnose**  | The dog pauses, takes a short reading, and explains what it sees         |
 | **Prescribe** | It recommends a nap in a warm, pre-recorded voice                        |
 | **Escort**    | It leads you to the mattress at a careful pace                           |
-| **Rounds**    | While people sleep, it returns on a schedule to check bags and breathing |
-| **Wake**      | Ring, whisper, hello wave: never physical contact                        |
-| **Ledger**    | Every nap, pass, and wake is recorded on a public timeline               |
+| **Nap ledger**| Arrival registers the nap and starts a visible wake-check countdown       |
+| **Expression**| A >60% hand cover queues a safe dog gesture without cancelling navigation |
+| **Posture**   | Lie down holds indefinitely; Stand releases the hold and resumes safely   |
 
 ---
 
@@ -41,7 +46,9 @@ Night Watch does not guess from a single blink. It watches a rolling window of s
 
 These roll up into a **RestScore** from 0 to 100, with a confidence indicator. Low confidence means the system holds back rather than calling you tired when the camera cannot see you clearly.
 
-For sleepers already napping, a separate **breathing check** uses optical flow on the torso to estimate breath rate. It abstains when someone moves or the signal is too weak. This is a verification aid, not a medical device.
+The planned sleeper-monitoring stage uses optical flow on the torso to estimate
+breath rate and abstains when the signal is weak. It is not wired into the
+current booth loop and must not be presented as a medical or safety device.
 
 ---
 
@@ -80,8 +87,8 @@ For sleepers already napping, a separate **breathing check** uses optical flow o
 | On-device AI    | Local LLM (Qwen via Ollama) for agent commands; no internet needed in demo     |
 | Vision          | YOLOv8-Face detection + MediaPipe face landmarks, OpenCV                       |
 | Fatigue scoring | Interpretable thresholds, with optional learned models trained on venue data   |
-| Breathing       | Optical-flow + frequency analysis on a still sleeper                           |
-| Voice           | Pre-rendered bilingual clips (warm caregiver tone, not runtime text-to-speech) |
+| Breathing       | Planned optical-flow verification; not active in the current demo               |
+| Voice           | Robot TTS fallback chain plus two reviewed booth WAV cues                       |
 | Booth           | Live video streams, score card, thought ticker, leaderboard                    |
 | Data            | Consent-gated capture sessions; SQLite ledger for the night's events           |
 
@@ -114,7 +121,9 @@ The booth stack is three independently run pieces:
 | **Policy API** | `server/` (FastAPI) | 8000 | Care loop, ledger, camera capture, proxies fatigue data to the UI |
 | **Fatigue detection** | `fatigue_fastapi_service/` (FastAPI) | 8001 | Real YOLOv8-Face + MediaPipe perception (EAR/MAR/PERCLOS/head-pose) over WebSocket |
 
-`server/` can run standalone with a scripted stub score (`SCORER_BACKEND=stub`, the default) or stream real webcam frames to the fatigue detection service for live scoring (`SCORER_BACKEND=live`). The stub needs no extra setup; live mode requires the fatigue service to be running first.
+`server/` streams real frames to the fatigue service by default
+(`SCORER_BACKEND=live`) and can fall back to a scripted score
+(`SCORER_BACKEND=stub`) for offline development.
 
 **Recommended:** develop on **native Windows** (`C:\Users\...\NightWatch`) for faster file I/O and simpler `pnpm`/`uv` tooling. Keep the repo on an NTFS path, not under `\\wsl$\...`.
 
@@ -127,6 +136,19 @@ The booth stack is three independently run pieces:
 - **Python 3.12** (not 3.13) for `fatigue_fastapi_service/` — MediaPipe does not ship 3.13 wheels yet
 
 ### Run locally (Windows PowerShell)
+
+Terminal 0 — Insta360 bridge (port 5556), optional when using
+`CAMERA_SOURCE=insta360`:
+
+```powershell
+# Requires the proprietary SDK in the git-ignored folder (not redistributable).
+$env:INSTA360_SDK_ROOT = "C:\path\to\Windows_CameraSDK-2.1.1_MediaSDK-3.1.3"
+cd insta360_bridge
+.\build.ps1
+.\build\Release\insta360_bridge.exe --port 5556
+```
+
+See [`insta360_bridge/README.md`](insta360_bridge/README.md) for camera setup.
 
 Terminal 1 — fatigue detection service (port 8001), only needed for `SCORER_BACKEND=live`:
 
@@ -160,7 +182,14 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:3000`. Next.js rewrites `/api/*`, `/video_feed/*`, and `/text_stream/*` to the FastAPI server.
+Open `http://localhost:3000`. API requests use the Next.js rewrite; the
+long-lived MJPEG and SSE connections use
+`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` directly so they are not
+buffered by the development proxy.
+
+Public nap intake (QR flow) is at `http://localhost:3000/form`. Answers persist
+in SQLite (`data/nightwatch.db` by default), and pending escorts appear on the
+booth page.
 
 ### Verify everything
 
@@ -184,8 +213,59 @@ Invoke-WebRequest http://localhost:3000 -UseBasicParsing
 | `/api/adopt` | POST | Adoption form |
 | `/api/capture` | POST | Capture session upload |
 | `/api/outcome` | POST | Post-wake survey |
+| `/api/robot/status` | GET | Robot connectivity, behavior, map, and bridge state |
+| `/api/form/schema` | GET | Intake questionnaire + `session_id` |
+| `/api/form/responses` | POST | Submit public nap intake |
+| `/api/form/responses/latest` | GET | Latest intake rows for booth |
+| `/api/form/responses/pending-escort` | GET | Visitors waiting for escort |
+| `/api/form/responses/{id}` | PATCH | Acknowledge, escort, or decline |
 
-Stub implementations ship by default (`DEMO_MODE=stub`). Swap services in `server/app/services/` when perception, policy, and robot modules are ready.
+Stub implementations remain available with `DEMO_MODE=stub` and
+`SCORER_BACKEND=stub`.
+
+### Integrated Go2 mode
+
+The repository now also contains the real DimensionalOS hardware package in
+`nightwatch/`. In live mode the services form one loop:
+
+```text
+Go2 camera (:5555) -> policy API (:8000) -> fatigue model (:8001)
+       ^                    |                       |
+       |                    +-- booth UI (:3000) <--+
+       +-- assessment POST + MCP intervention/escort calls (:9990)
+```
+
+The bridge does not act on one frame. It requires consecutive windows from the
+same anonymous track, minimum confidence/quality, a minimum observation time,
+and a per-person cooldown. It first calls `potential_detected`; only stronger
+sustained evidence then calls `escort_to_sleeping_area`. Every assessment is
+also shown on the robot operator page and written to a local JSONL audit trail.
+An explicit, consented QR intake request can also dispatch the escort directly
+when the booth operator acknowledges it; successful robot completion marks the
+request escorted.
+
+After creating `server/.venv`, `fatigue_fastapi_service/.venv`, and installing
+the client packages as described above, start all user-space services with:
+
+```bash
+./run_integrated.sh
+```
+
+Start the Go2 separately with `./nightwatch/run_scout.sh`, or have the launcher
+start it too:
+
+```bash
+./run_integrated.sh --with-robot
+```
+
+The launcher always uses `SCORER_BACKEND=live` unless overridden. Without
+flags it uses the local webcam and leaves robot calls disabled. With
+`--with-robot`, it uses the Go2 camera, enables the assessment/action bridge,
+and starts the scout stack.
+
+Thresholds and endpoints are configurable in `server/.env.example`. The robot
+can remain offline during frontend/model development; `/api/robot/status`
+reports the disconnected state and no motion calls are attempted.
 
 ---
 

@@ -63,6 +63,20 @@ class FatigueFrame:
     factors: FatigueFactors
     calib_state: str
     scorer: str
+    quality: float = 0.0
+    status: str = "NO_FACE"
+    calibration_progress: float = 0.0
+    landmarks_detected: bool = False
+    model_version: str = "unknown"
+    processing_ms: float = 0.0
+    sequence: int = -1
+    source_status: str = "connecting"
+    looking_at_camera: bool = False
+    head_pitch: float | None = None
+    head_yaw: float | None = None
+    gaze_horizontal: float | None = None
+    gaze_vertical: float | None = None
+    people: list[FatigueFrame] = field(default_factory=list)
 
 
 @dataclass

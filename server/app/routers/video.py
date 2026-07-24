@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import cv2
-from fastapi import APIRouter, Request
+import requests
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(tags=["video"])
 
@@ -54,3 +56,34 @@ async def video_feed_annotated(request: Request) -> StreamingResponse:
         _mjpeg_stream(request, annotated=True),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@router.get("/video_feed/robot")
+async def video_feed_robot(request: Request) -> StreamingResponse:
+    """Byte-for-byte proxy of the robot's first-person MJPEG camera
+    (ROBOT_CAMERA_URL, the Go2 operator API). Independent of CAMERA_SOURCE,
+    so the booth camera config never affects the /lidar robot-eyes feed.
+    A 502 tells the client to retry; the connect must fail fast so the retry
+    loop stays responsive."""
+    url = request.app.state.settings.robot_camera_url
+    try:
+        upstream = await run_in_threadpool(
+            lambda: requests.get(url, stream=True, timeout=(3.05, 10))
+        )
+        upstream.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="robot camera unavailable") from exc
+
+    media_type = upstream.headers.get(
+        "content-type", "multipart/x-mixed-replace; boundary=frame"
+    )
+
+    def stream() -> Iterator[bytes]:
+        try:
+            yield from upstream.iter_content(chunk_size=16384)
+        except requests.RequestException:
+            pass  # upstream died mid-stream; ending the response triggers a client retry
+        finally:
+            upstream.close()
+
+    return StreamingResponse(stream(), media_type=media_type)

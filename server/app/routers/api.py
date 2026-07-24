@@ -1,13 +1,27 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.contracts import CaptureRecord, FeatureVector, fatigue_frame_to_dict
 
 router = APIRouter(prefix="/api", tags=["api"])
+
+_TTS_SAMPLE_DIR = (
+    Path(__file__).resolve().parents[3] / "nightwatch" / "assets" / "tts_samples"
+)
+_AUDIO_CUES = {
+    "triage_01": "sample1_greeting.wav",
+    "approach_01": "sample1_greeting.wav",
+    "diagnose_01": "sample1_greeting.wav",
+    "prescribe_01": "sample1_greeting.wav",
+    "escort_01": "sample2_escort.wav",
+    "nap_registered_01": "sample2_escort.wav",
+}
 
 
 class AdoptRequest(BaseModel):
@@ -35,15 +49,32 @@ class CaptureRequest(BaseModel):
     consent_raw_video: bool = False
 
 
+class RobotActionRequest(BaseModel):
+    action: str
+
+
 @router.get("/score")
 async def get_score(request: Request) -> dict[str, Any]:
     frame = request.app.state.score_source.latest()
     return fatigue_frame_to_dict(frame)
 
 
+@router.get("/audio/{cue_id}")
+async def get_audio_cue(cue_id: str) -> FileResponse:
+    """Serve only the reviewed booth voice cues referenced by policy events."""
+    filename = _AUDIO_CUES.get(cue_id)
+    if filename is None:
+        raise HTTPException(status_code=404, detail="unknown audio cue")
+    path = _TTS_SAMPLE_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=503, detail="audio cue unavailable")
+    return FileResponse(path, media_type="audio/wav", filename=filename)
+
+
 @router.get("/plan")
 async def get_plan(request: Request) -> dict[str, Any]:
-    return request.app.state.ledger.get_plan()
+    pending = request.app.state.intake_db.list_pending_escort()
+    return request.app.state.ledger.build_plan(pending)
 
 
 @router.get("/ledger")
@@ -54,6 +85,29 @@ async def get_ledger(request: Request) -> dict[str, Any]:
 @router.get("/leaderboard")
 async def get_leaderboard(request: Request) -> dict[str, Any]:
     return request.app.state.ledger.get_leaderboard()
+
+
+@router.get("/robot/status")
+async def get_robot_status(request: Request) -> dict[str, Any]:
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    if bridge is None:
+        return {
+            "enabled": False,
+            "connected": False,
+            "policy_active": False,
+        }
+    return bridge.snapshot()
+
+
+@router.post("/robot/action")
+async def post_robot_action(
+    request: Request, body: RobotActionRequest
+) -> dict[str, Any]:
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    if bridge is None:
+        return {"ok": False, "message": "Robot bridge is unavailable"}
+    result = await bridge.operator_action(body.action)
+    return {"ok": result.ok, "message": result.text}
 
 
 @router.post("/adopt")
