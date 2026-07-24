@@ -15,7 +15,21 @@ set -euo pipefail
 # never destroy a good premap.
 
 project_root=${0:A:h:h}
-dimos_root="$project_root/dimos"
+dimos_root="${DIMOS_ROOT:-${project_root:h}/dimos}"
+
+dimos_bin="${DIMOS_BIN:-}"
+if [[ -z "$dimos_bin" && "${CONDA_DEFAULT_ENV:-}" == "dimos" && -n "${CONDA_PREFIX:-}" ]]; then
+  dimos_bin="$CONDA_PREFIX/bin/dimos"
+fi
+if [[ -z "$dimos_bin" ]] && command -v conda >/dev/null 2>&1; then
+  conda_base=$(conda info --base 2>/dev/null || true)
+  [[ -n "$conda_base" ]] && dimos_bin="$conda_base/envs/dimos/bin/dimos"
+fi
+if [[ -z "$dimos_bin" || ! -x "$dimos_bin" ]]; then
+  print -u2 "The conda environment 'dimos' is unavailable. Activate it or set DIMOS_BIN."
+  exit 1
+fi
+dimos_python="${dimos_bin:h}/python"
 
 auto_promote=0
 if [[ "${1:-}" == "--auto-promote" ]]; then
@@ -46,7 +60,7 @@ base=${dataset:t:r}
 if (( ! auto_promote )); then
   mkdir -p "$output_dir"
   cd "$output_dir"
-  exec "$dimos_root/.venv/bin/dimos" map global "$dataset" \
+  exec "$dimos_bin" map global "$dataset" \
     --voxel 0.05 \
     --device CPU:0 \
     --pgo \
@@ -70,7 +84,7 @@ staging="$output_dir/.staging"
 rm -rf "$staging"
 mkdir -p "$staging"
 cd "$staging"
-"$dimos_root/.venv/bin/dimos" map global "$dataset" \
+"$dimos_bin" map global "$dataset" \
   --voxel 0.05 \
   --device CPU:0 \
   --pgo \
@@ -94,7 +108,7 @@ cp "$exported" "$stamped"
 new_bytes=$(stat -f %z "$stamped")
 if [[ -f "$canonical" ]]; then
   map_xy_area_milli() {
-    "$dimos_root/.venv/bin/python" - "$1" <<'PY'
+    "$dimos_python" - "$1" <<'PY'
 import sys
 import numpy as np
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2

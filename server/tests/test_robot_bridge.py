@@ -80,11 +80,13 @@ def test_emit_once_posts_to_robot_and_keeps_jsonl_audit(
             return None
 
         def json(self) -> dict[str, Any]:
-            return {
-                "behavior": "patrol",
-                "owner": "curiosity",
-                "map_phase": "MAPPED",
-            }
+                return {
+                    "behavior": "patrol",
+                    "owner": "curiosity",
+                    "map_phase": "MAPPED",
+                    "mission_mode": "cruise",
+                    "control_mode": "autonomous",
+                }
 
     monkeypatch.setattr(
         "app.services.robot_bridge.requests.get",
@@ -115,6 +117,7 @@ def test_care_sequence_calls_intervention_then_escort(tmp_path) -> None:
         publish_event=events.append,
         consecutive_windows=2,
         escort_score=0.75,
+        intake_timeout_seconds=1.0,
     )
     now = time.time()
     for offset in (10.0, 15.0):
@@ -137,16 +140,40 @@ def test_care_sequence_calls_intervention_then_escort(tmp_path) -> None:
         "enabled": True,
         "connected": True,
         "behavior": "patrol",
+        "mission_mode": "cruise",
+        "control_mode": "autonomous",
         "ts": now,
     }
 
-    asyncio.run(bridge._run_care_sequence("track-7"))
+    async def scenario() -> None:
+        task = asyncio.create_task(bridge._run_care_sequence("track-7"))
+        for _ in range(100):
+            interaction = bridge.active_interaction()
+            if interaction is not None:
+                break
+            await asyncio.sleep(0)
+        assert interaction is not None
+        assert bridge.bind_intake_response(
+            interaction["interaction_id"],
+            {
+                "response_id": "response-1",
+                "consent_analysis": False,
+                "tiredness": "tired",
+                "wants_escort": True,
+            },
+        )
+        await task
 
-    assert calls == ["potential_detected", "escort_to_sleeping_area"]
+    asyncio.run(scenario())
+
+    assert "potential_detected" in calls
+    assert "escort_to_sleeping_area" in calls
+    assert calls.index("potential_detected") < calls.index(
+        "escort_to_sleeping_area"
+    )
     assert [event.state for event in events] == [
         "TRIAGE",
         "APPROACH",
-        "DIAGNOSE",
         "PRESCRIBE",
         "ESCORT",
         "NAP_REGISTERED",
@@ -165,7 +192,7 @@ def test_explicit_intake_escort_marks_request_escorted(tmp_path) -> None:
     async def fake_call(
         name: str, _arguments: dict[str, Any] | None = None
     ) -> SkillResult:
-        assert name == "escort_to_sleeping_area"
+        assert name in {"set_interaction_state", "escort_to_sleeping_area"}
         return SkillResult(True, "arrived")
 
     bridge._call_skill = fake_call  # type: ignore[method-assign]

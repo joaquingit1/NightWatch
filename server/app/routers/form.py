@@ -15,15 +15,6 @@ MAX_SUBMISSIONS_PER_HOUR = 10
 FORM_SCHEMA: dict[str, Any] = {
     "questions": [
         {
-            "id": "consent_analysis",
-            "prompt_zh": "同意进行疲劳分析吗？",
-            "prompt_en": "Consent to fatigue analysis?",
-            "options": [
-                {"value": True, "label_zh": "同意", "label_en": "Yes"},
-                {"value": False, "label_zh": "不同意", "label_en": "No"},
-            ],
-        },
-        {
             "id": "tiredness",
             "prompt_zh": "你现在感觉如何？",
             "prompt_en": "How do you feel right now?",
@@ -34,11 +25,11 @@ FORM_SCHEMA: dict[str, Any] = {
         },
         {
             "id": "wants_escort",
-            "prompt_zh": "要我带你去休息区吗？",
-            "prompt_en": "Guide you to the rest area?",
+            "prompt_zh": "要我带你去休息吗？",
+            "prompt_en": "Would you like me to take you somewhere to rest?",
             "options": [
-                {"value": True, "label_zh": "好的，带我去", "label_en": "Yes, please"},
-                {"value": False, "label_zh": "暂时不用", "label_en": "Not now"},
+                {"value": True, "label_zh": "好的，带我去", "label_en": "Yes"},
+                {"value": False, "label_zh": "不用了，谢谢", "label_en": "No"},
             ],
         },
     ]
@@ -47,7 +38,10 @@ FORM_SCHEMA: dict[str, Any] = {
 
 class IntakeSubmitRequest(BaseModel):
     session_id: str = Field(min_length=8, max_length=64)
-    consent_analysis: bool
+    interaction_id: str | None = Field(default=None, min_length=8, max_length=64)
+    # Legacy storage field retained for old API clients. The UI-design form
+    # intentionally asks only tiredness and escort preference.
+    consent_analysis: bool = False
     tiredness: Literal["energized", "tired"] = "energized"
     wants_escort: bool = False
     name_alias: str | None = Field(default=None, max_length=32)
@@ -69,10 +63,28 @@ def _check_operator_key(request: Request) -> None:
 
 @router.get("/schema")
 async def get_form_schema(
+    request: Request,
     s: str | None = Query(default=None, alias="s"),
 ) -> dict[str, Any]:
     session_id = s or uuid.uuid4().hex
-    return {**FORM_SCHEMA, "session_id": session_id}
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    active_interaction = (
+        bridge.active_interaction() if bridge is not None else None
+    )
+    return {
+        **FORM_SCHEMA,
+        "session_id": session_id,
+        "interaction_id": (
+            active_interaction["interaction_id"]
+            if active_interaction is not None
+            else None
+        ),
+        "interaction_expires_ts": (
+            active_interaction["deadline_ts"]
+            if active_interaction is not None
+            else None
+        ),
+    }
 
 
 @router.post("/responses")
@@ -84,6 +96,7 @@ async def submit_intake(request: Request, body: IntakeSubmitRequest) -> dict[str
 
     record = db.insert(
         session_id=body.session_id,
+        interaction_id=body.interaction_id,
         consent_analysis=body.consent_analysis,
         tiredness=body.tiredness,
         wants_escort=body.wants_escort,
@@ -95,10 +108,24 @@ async def submit_intake(request: Request, body: IntakeSubmitRequest) -> dict[str
         tiredness=body.tiredness,
         wants_escort=body.wants_escort,
     )
-    hint = routing_hint(body.consent_analysis, body.wants_escort)
+    hint = routing_hint(
+        body.consent_analysis, body.wants_escort, body.tiredness
+    )
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    interaction_bound = (
+        bridge.bind_intake_response(body.interaction_id, record.to_dict())
+        if bridge is not None
+        else False
+    )
     return {
         **record.to_dict(),
         "routing_hint": hint,
+        "interaction_bound": interaction_bound,
+        "interaction_status": (
+            "bound"
+            if interaction_bound
+            else ("already_handled_or_expired" if body.interaction_id else "ordinary")
+        ),
     }
 
 

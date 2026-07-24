@@ -53,6 +53,17 @@ class RobotActionRequest(BaseModel):
     action: str
 
 
+class FatigueAutoTakeoverRequest(BaseModel):
+    enabled: bool
+
+
+class BedroomRequest(BaseModel):
+    at_robot: bool = False
+    world_x: float | None = None
+    world_y: float | None = None
+    world_z: float = 0.0
+
+
 @router.get("/score")
 async def get_score(request: Request) -> dict[str, Any]:
     frame = request.app.state.score_source.latest()
@@ -108,6 +119,79 @@ async def post_robot_action(
         return {"ok": False, "message": "Robot bridge is unavailable"}
     result = await bridge.operator_action(body.action)
     return {"ok": result.ok, "message": result.text}
+
+
+@router.put("/robot/fatigue-auto-takeover")
+async def put_fatigue_auto_takeover(
+    request: Request, body: FatigueAutoTakeoverRequest
+) -> dict[str, Any]:
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="robot bridge is unavailable")
+    return bridge.set_fatigue_auto_takeover(body.enabled)
+
+
+@router.post("/robot/approach-nearest")
+async def post_robot_approach_nearest(request: Request) -> dict[str, Any]:
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="robot bridge is unavailable")
+    if not bridge.request_operator_approach():
+        raise HTTPException(
+            status_code=409,
+            detail="robot is offline, busy, held, or not in cruise mode",
+        )
+    return {"ok": True, "message": "nearest-person interaction started"}
+
+
+@router.post("/robot/cancel-interaction")
+async def post_robot_cancel_interaction(request: Request) -> dict[str, Any]:
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="robot bridge is unavailable")
+    return {
+        "ok": bridge.cancel_interaction(),
+        "message": "interaction cancellation requested",
+    }
+
+
+@router.get("/robot/bedroom")
+async def get_robot_bedroom(request: Request) -> dict[str, Any]:
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    if bridge is None:
+        return {"bedroom": None, "connected": False}
+    status = bridge.snapshot()
+    return {
+        "bedroom": status.get("bedroom"),
+        "connected": bool(status.get("connected")),
+    }
+
+
+@router.put("/robot/bedroom")
+async def put_robot_bedroom(
+    request: Request, body: BedroomRequest
+) -> dict[str, Any]:
+    bridge = getattr(request.app.state, "robot_bridge", None)
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="robot bridge is unavailable")
+    if body.at_robot:
+        result = await bridge.set_bedroom_here()
+    else:
+        if body.world_x is None or body.world_y is None:
+            raise HTTPException(
+                status_code=422,
+                detail="world_x and world_y are required for a map position",
+            )
+        result = await bridge.set_bedroom_at(
+            body.world_x, body.world_y, body.world_z
+        )
+    if not result.ok:
+        raise HTTPException(status_code=409, detail=result.text)
+    return {
+        "ok": True,
+        "message": result.text,
+        "bedroom": bridge.snapshot().get("bedroom"),
+    }
 
 
 @router.post("/adopt")

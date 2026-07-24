@@ -20,40 +20,32 @@ export function IntakeQuestion({
   selected = null,
 }: IntakeQuestionProps) {
   return (
-    <div className="animate-slide-up space-y-6">
-      <div className="text-center space-y-2 px-2">
-        <h2 className="text-2xl font-bold text-booth-text leading-snug">{promptZh}</h2>
-        <p className="text-sm text-booth-muted">{promptEn}</p>
+    <div className="intake-question">
+      <div className="intake-question-copy">
+        <h2>{promptZh}</h2>
+        <p>{promptEn}</p>
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {options.map((option) => {
+      <div className="intake-option-list">
+        {options.map((option, index) => {
           const isSelected = selected === option.value;
           return (
             <button
               key={String(option.value)}
               type="button"
               onClick={() => onSelect(option.value)}
-              className={`group relative flex min-h-[120px] flex-col items-center justify-center rounded-2xl border-2 px-4 py-6 text-center transition-all duration-200 active:scale-[0.98] ${
-                isSelected
-                  ? "border-booth-accent bg-blue-50 shadow-md shadow-booth-accent/10"
-                  : "border-booth-border bg-white hover:border-booth-accent/50 hover:bg-blue-50/40"
-              }`}
+              aria-pressed={isSelected}
+              className={`intake-option ${isSelected ? "is-selected" : ""}`}
             >
-              <span
-                className={`mb-4 flex h-10 w-10 items-center justify-center rounded-full border-2 transition-colors ${
-                  isSelected
-                    ? "border-booth-accent bg-booth-accent text-white"
-                    : "border-slate-300 bg-white text-transparent group-hover:border-booth-accent/60"
-                }`}
-              >
-                {isSelected && (
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
+              <span className="intake-option-label">
+                <strong>{option.labelZh}</strong>
+                <span aria-hidden="true"> / </span>
+                <b>{option.labelEn.toUpperCase()}</b>
               </span>
-              <span className="text-lg font-semibold text-booth-text">{option.labelZh}</span>
-              <span className="mt-1 text-xs text-booth-muted">{option.labelEn}</span>
+              <span className={`intake-option-arrow ${index === 0 ? "is-orange" : "is-blue"}`}>
+                <svg viewBox="0 0 64 32" aria-hidden="true">
+                  <path d="M1 16h54M42 3l13 13-13 13" />
+                </svg>
+              </span>
             </button>
           );
         })}

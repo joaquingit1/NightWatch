@@ -181,13 +181,16 @@ def run_wave_protocol(
       time it is True the protocol performs exactly ONE more real wave (which
       counts toward the cap) and stops.
     - The lease is renewed once per attempt so a slow wave sequence never lets
-      the behavior lease expire underneath the protocol.
+      the behavior lease expire underneath the protocol. An explicit ``False``
+      means the operator or safety layer revoked authority, so no further
+      firmware command may be sent.
     """
     waves = 0
     attempts = 0
     looked = False
     while waves < max_waves and attempts < max_attempts:
-        renew_lease()
+        if renew_lease() is False:
+            break
         attempts += 1
         if not waver():
             # Blocked by firmware: re-arm and retry; this attempt is not a wave.
@@ -384,7 +387,12 @@ class InterventionSkill(Module):
         centrality = 1.0 - abs((x1 + x2) / 2.0 - image_width / 2.0) / half
         return area * (0.5 + 0.5 * centrality)
 
-    def _pick_subject(self, image: Image, detections: list[Any]) -> Any | None:
+    def _pick_subject(
+        self,
+        image: Image,
+        detections: list[Any],
+        anchor_bbox: list[float] | tuple[float, ...] | None = None,
+    ) -> Any | None:
         candidates = [
             d
             for d in detections
@@ -393,13 +401,31 @@ class InterventionSkill(Module):
         ]
         if not candidates:
             return None
+        if anchor_bbox is not None and len(anchor_bbox) == 4:
+            fx1, fy1, fx2, fy2 = (float(value) for value in anchor_bbox)
+            face_x = (fx1 + fx2) * 0.5
+            face_y = (fy1 + fy2) * 0.5
+            candidates = [
+                candidate
+                for candidate in candidates
+                if float(candidate.bbox[0]) <= face_x <= float(candidate.bbox[2])
+                and float(candidate.bbox[1]) <= face_y <= float(candidate.bbox[3])
+            ]
+            if not candidates:
+                # A fatigue-triggered interaction must not silently switch to
+                # a different person when the locked face has disappeared.
+                return None
         return max(candidates, key=lambda d: self._prominence(d, float(image.width)))
 
-    def _visible_subject(self) -> Any | None:
+    def _visible_subject(
+        self, anchor_bbox: list[float] | tuple[float, ...] | None = None
+    ) -> Any | None:
         image = self._latest_image
         if image is None or image.height <= 0 or image.width <= 0:
             return None
-        return self._pick_subject(image, self._detect_people(image))
+        return self._pick_subject(
+            image, self._detect_people(image), anchor_bbox=anchor_bbox
+        )
 
     def _gaze_sample(self, track_id: int | None) -> bool:
         """One frame: does the tracked (or most prominent) subject look frontal."""
@@ -425,11 +451,15 @@ class InterventionSkill(Module):
 
     # ---- motion helpers -----------------------------------------------------
 
-    def _find_subject(self) -> Any | None:
+    def _find_subject(
+        self, anchor_bbox: list[float] | tuple[float, ...] | None = None
+    ) -> Any | None:
         """Return a visible subject, scanning in place up to a full turn."""
-        subject = self._visible_subject()
+        subject = self._visible_subject(anchor_bbox)
         if subject is not None:
             return subject
+        if anchor_bbox is not None:
+            return None
         step_rad = math.radians(self.config.scan_step_deg)
         duration = abs(step_rad) / max(0.05, self.config.scan_turn_rad_s)
         for _ in range(self.config.scan_max_steps):
@@ -803,10 +833,34 @@ class InterventionSkill(Module):
                     duration_s=clock() - start,
                     message="No potential subject found after scanning.",
                 )
+            if renew() is False:
+                return InterventionResult(
+                    found=False,
+                    waves_performed=0,
+                    blocked_attempts=0,
+                    subject_looked=False,
+                    duration_s=clock() - start,
+                    message=(
+                        "Cannot start the suspicious protocol: motion "
+                        "authority was revoked by the operator or safety layer."
+                    ),
+                )
             # Kick off the personalized-comment vision call so it overlaps the
             # approach (added latency is hidden).
             take_comment = _safe("comment start", start_comment)
             approach(subject)
+            if renew() is False:
+                return InterventionResult(
+                    found=False,
+                    waves_performed=0,
+                    blocked_attempts=0,
+                    subject_looked=False,
+                    duration_s=clock() - start,
+                    message=(
+                        "Cannot start the suspicious protocol: motion "
+                        "authority was revoked by the operator or safety layer."
+                    ),
+                )
             # Announce the dog AFTER arrival and BEFORE the arc, so the subject
             # hears it (and the "please look at me" cue) while it repositions.
             _safe("greeting", greet)
@@ -820,6 +874,18 @@ class InterventionSkill(Module):
                 timeout_s=self.config.arc_timeout_s,
                 clock=clock,
             )
+            if renew() is False:
+                return InterventionResult(
+                    found=False,
+                    waves_performed=0,
+                    blocked_attempts=0,
+                    subject_looked=False,
+                    duration_s=clock() - start,
+                    message=(
+                        "Cannot start the suspicious protocol: motion "
+                        "authority was revoked by the operator or safety layer."
+                    ),
+                )
             # Speak the comment before the first wave; fail silent.
             comment = _safe("comment fetch", take_comment) if take_comment else None
             if comment:
@@ -877,7 +943,11 @@ class InterventionSkill(Module):
                 logger.exception("intervention lease release failed")
 
     @skill(uses=[CAP_MOVEMENT])
-    def potential_detected(self, query: str = "person") -> str:
+    def potential_detected(
+        self,
+        query: str = "person",
+        initial_bbox: list[float] | None = None,
+    ) -> str:
         """Run the suspicious-subject protocol on a visible potential subject.
 
         Stands next to the subject and waves (raising the camera onto their
@@ -921,7 +991,7 @@ class InterventionSkill(Module):
         arc_state: dict[str, Any] = {"center": None, "theta0": None}
 
         def find_subject() -> Any | None:
-            subject = self._find_subject()
+            subject = self._find_subject(initial_bbox)
             if subject is not None:
                 subject_track["id"] = int(getattr(subject, "track_id", -1))
             return subject

@@ -3,7 +3,10 @@ name = "nightwatch"
 version = "0.1.0"
 description = "Night Watch: rest-guardian blueprints for Unitree Go2 on DimensionalOS"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    # Required by DimOS' FastAPI operator console for /submit_query form data.
+    "python-multipart>=0.0.20",
+]
 
 [project.entry-points."dimos.blueprints"]
 scout = "nightwatch.blueprints:scout"

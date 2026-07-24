@@ -290,6 +290,7 @@ class NightwatchWorldModel(Module):
         # sets came from an earlier boot and are only usable via map coords.
         self._session_area_ids: set[str] = set()
         self._session_object_ids: set[str] = set()
+        self._session_id = uuid.uuid4().hex
         self._world_to_map_cache: tuple[float, float, float] | None = None
         self._world_to_map_cache_until = 0.0
 
@@ -452,6 +453,18 @@ class NightwatchWorldModel(Module):
                 center_z REAL NOT NULL,
                 evidence INTEGER NOT NULL,
                 last_seen REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS operator_destinations (
+                name TEXT PRIMARY KEY,
+                map_x REAL NOT NULL,
+                map_y REAL NOT NULL,
+                map_z REAL NOT NULL DEFAULT 0.0,
+                world_x REAL NOT NULL,
+                world_y REAL NOT NULL,
+                world_z REAL NOT NULL DEFAULT 0.0,
+                source_session TEXT NOT NULL,
+                source TEXT NOT NULL,
+                updated_ts REAL NOT NULL
             );
             """
         )
@@ -1553,6 +1566,7 @@ class NightwatchWorldModel(Module):
                 """
             ).fetchall()
             history = list(self._odom_history)
+        bedroom = self.bedroom_destination()
 
         markers: list[Marker] = []
         for auto_tag, area_type, x, y in area_rows:
@@ -1586,6 +1600,17 @@ class NightwatchWorldModel(Module):
                     x=float(x),
                     y=float(y),
                     z=float(z) + 0.3,
+                )
+            )
+        if bedroom is not None:
+            markers.append(
+                Marker(
+                    entity_id="destination:bedroom",
+                    label="Bedroom",
+                    entity_type="location",
+                    x=float(bedroom["x"]),
+                    y=float(bedroom["y"]),
+                    z=float(bedroom.get("z", 0.0)) + 0.45,
                 )
             )
         if markers:
@@ -1787,6 +1812,7 @@ class NightwatchWorldModel(Module):
             coverage = self._explore.coverage_status()
         except Exception:
             coverage = {}
+        bedroom = self.bedroom_status()
         return {
             "enabled": True,
             "areas": areas,
@@ -1805,6 +1831,7 @@ class NightwatchWorldModel(Module):
                 else ("degraded" if self._area_vlm_error else "ready")
             ),
             "area_vlm_error": self._area_vlm_error,
+            "bedroom": bedroom,
             **coverage,
         }
 
@@ -1902,6 +1929,176 @@ class NightwatchWorldModel(Module):
                     },
                 )
         return best[1] if best is not None else None
+
+    @rpc
+    def bedroom_destination(
+        self, _x: float = 0.0, _y: float = 0.0
+    ) -> dict[str, Any] | None:
+        """Return the unique Bedroom in the current WORLD frame."""
+        db = self._db
+        if db is None:
+            return None
+        with self._lock:
+            row = db.execute(
+                """
+                SELECT map_x,map_y,map_z,world_x,world_y,world_z,
+                       source_session,source,updated_ts
+                FROM operator_destinations WHERE name='bedroom'
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        mx, my, mz, wx, wy, wz, source_session, source, updated_ts = row
+        current_session = str(source_session) == getattr(self, "_session_id", "")
+        transform = self._world_to_map()
+        if current_session:
+            current_x, current_y = float(wx), float(wy)
+        elif transform is not None:
+            tx, ty, yaw = transform
+            cos_yaw = math.cos(yaw)
+            sin_yaw = math.sin(yaw)
+            dx = float(mx) - tx
+            dy = float(my) - ty
+            current_x = cos_yaw * dx + sin_yaw * dy
+            current_y = -sin_yaw * dx + cos_yaw * dy
+        else:
+            return None
+        return {
+            "area_id": "bedroom",
+            "name": "bedroom",
+            "area_type": "sleeping_area",
+            "x": current_x,
+            "y": current_y,
+            "z": float(wz if current_session else mz),
+            "map_x": float(mx),
+            "map_y": float(my),
+            "map_z": float(mz),
+            "source": str(source),
+            "updated_ts": float(updated_ts),
+            "persistent": True,
+        }
+
+    @skill
+    def bedroom_status(self) -> dict[str, Any] | None:
+        """Return Bedroom metadata even when it cannot yet be reprojected."""
+        db = self._db
+        if db is None:
+            return None
+        with self._lock:
+            row = db.execute(
+                """
+                SELECT map_x,map_y,map_z,source,updated_ts
+                FROM operator_destinations WHERE name='bedroom'
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        current = self.bedroom_destination()
+        return {
+            "name": "bedroom",
+            "map_x": float(row[0]),
+            "map_y": float(row[1]),
+            "map_z": float(row[2]),
+            "source": str(row[3]),
+            "updated_ts": float(row[4]),
+            "available": current is not None,
+            **(
+                {
+                    "world_x": float(current["x"]),
+                    "world_y": float(current["y"]),
+                    "world_z": float(current["z"]),
+                }
+                if current is not None
+                else {}
+            ),
+        }
+
+    def _set_bedroom_world(
+        self, world_x: float, world_y: float, world_z: float, source: str
+    ) -> str:
+        values = (float(world_x), float(world_y), float(world_z))
+        if not all(math.isfinite(value) for value in values):
+            return "Cannot set Bedroom: coordinates must be finite."
+        db = self._db
+        if db is None:
+            return "Cannot set Bedroom: world model is unavailable."
+        transform = self._world_to_map()
+        if transform is None:
+            # During the first mapping session WORLD is the map being created.
+            # Persisting the identical coordinates lets a later relocalized
+            # session recover this point in the saved MAP frame.
+            map_x, map_y = values[0], values[1]
+        else:
+            tx, ty, yaw = transform
+            map_x = math.cos(yaw) * values[0] - math.sin(yaw) * values[1] + tx
+            map_y = math.sin(yaw) * values[0] + math.cos(yaw) * values[1] + ty
+        now = time.time()
+        with self._lock:
+            db.execute(
+                """
+                INSERT INTO operator_destinations(
+                    name,map_x,map_y,map_z,world_x,world_y,world_z,
+                    source_session,source,updated_ts
+                ) VALUES('bedroom',?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(name) DO UPDATE SET
+                    map_x=excluded.map_x,
+                    map_y=excluded.map_y,
+                    map_z=excluded.map_z,
+                    world_x=excluded.world_x,
+                    world_y=excluded.world_y,
+                    world_z=excluded.world_z,
+                    source_session=excluded.source_session,
+                    source=excluded.source,
+                    updated_ts=excluded.updated_ts
+                """,
+                (
+                    map_x,
+                    map_y,
+                    values[2],
+                    values[0],
+                    values[1],
+                    values[2],
+                    self._session_id,
+                    source,
+                    now,
+                ),
+            )
+            db.commit()
+        self._event(
+            "bedroom_updated",
+            "Operator updated the unique Bedroom destination",
+            severity="info",
+            map_x=map_x,
+            map_y=map_y,
+            source=source,
+        )
+        return (
+            f"Bedroom updated at world ({values[0]:.2f}, {values[1]:.2f}) "
+            f"and map ({map_x:.2f}, {map_y:.2f})."
+        )
+
+    @skill
+    def set_bedroom_at(
+        self, world_x: float, world_y: float, world_z: float = 0.0
+    ) -> str:
+        """Replace the one Bedroom with an arbitrary map-view position."""
+        return self._set_bedroom_world(
+            world_x, world_y, world_z, "operator_map_click"
+        )
+
+    @skill
+    def set_bedroom_here(self) -> str:
+        """Replace the one Bedroom with the robot's current position."""
+        with self._lock:
+            odom = self._latest_odom
+        if odom is None:
+            return "Cannot set Bedroom: robot pose is unavailable."
+        return self._set_bedroom_world(
+            float(odom.position.x),
+            float(odom.position.y),
+            float(odom.position.z),
+            "operator_robot_pose",
+        )
 
     @skill
     def list_remembered_objects(

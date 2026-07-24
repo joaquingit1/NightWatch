@@ -29,6 +29,8 @@ _REFUSAL_PREFIXES = (
     "Cannot start the escort:",
     "Error running tool '",
     "No sleeping area is known",
+    "No Bedroom is available",
+    "Cannot set Bedroom:",
     "Escort ended without reaching",
 )
 _STATE_UTTERANCES = {
@@ -45,6 +47,16 @@ _STATE_UTTERANCES = {
 class SkillResult:
     ok: bool
     text: str
+
+
+@dataclass
+class InteractionSession:
+    interaction_id: str
+    track_id: str
+    source: str
+    started_ts: float
+    deadline_ts: float
+    response: dict[str, Any] | None = None
 
 
 def _factors_from_frame(frame: FatigueFrame) -> tuple[str, ...]:
@@ -128,7 +140,9 @@ class RobotBridge:
         min_observation_seconds: float = 8.0,
         consecutive_windows: int = 2,
         person_cooldown_seconds: float = 180.0,
+        intake_timeout_seconds: float = 180.0,
         update_intake_status: Callable[[str, str], Any] | None = None,
+        set_detection_enabled: Callable[[bool, str | None], Any] | None = None,
     ) -> None:
         self._assessment_path = Path(assessment_path) if assessment_path else None
         self._status_url = status_url
@@ -144,7 +158,9 @@ class RobotBridge:
         self._min_observation_seconds = max(0.0, min_observation_seconds)
         self._consecutive_windows = max(1, consecutive_windows)
         self._person_cooldown_seconds = max(0.0, person_cooldown_seconds)
+        self._intake_timeout_seconds = max(1.0, intake_timeout_seconds)
         self._update_intake_status = update_intake_status
+        self._set_detection_enabled = set_detection_enabled
 
         self._track_started: dict[str, float] = {}
         self._last_seen: dict[str, float] = {}
@@ -161,6 +177,14 @@ class RobotBridge:
         self._policy_task: asyncio.Task[None] | None = None
         self._stopping = False
         self._request_id = 0
+        self._fatigue_auto_takeover = False
+        self._detection_enabled = True
+        self._detection_pause_reason: str | None = None
+        self._interaction_state = "idle"
+        self._last_manual_input_seq: int | None = None
+        self._last_control_mode: str | None = None
+        self._active_interaction: InteractionSession | None = None
+        self._interaction_event = asyncio.Event()
 
     async def start(self) -> None:
         self._stopping = False
@@ -189,9 +213,76 @@ class RobotBridge:
                 ),
                 "intervene_score": self._intervene_score,
                 "escort_score": self._escort_score,
+                "fatigue_auto_takeover": self._fatigue_auto_takeover,
+                "fatigue_detection": (
+                    "enabled" if self._detection_enabled else "disabled"
+                ),
+                "fatigue_pause_reason": self._detection_pause_reason,
+                "interaction_state": self._interaction_state,
+                "active_interaction": self.active_interaction(),
             }
         )
         return status
+
+    def set_fatigue_auto_takeover(self, enabled: bool) -> dict[str, Any]:
+        self._fatigue_auto_takeover = bool(enabled)
+        return {
+            "enabled": self._fatigue_auto_takeover,
+            "control_mode": self._latest_status.get("control_mode"),
+        }
+
+    def active_interaction(self) -> dict[str, Any] | None:
+        session = self._active_interaction
+        if session is None:
+            return None
+        return {
+            "interaction_id": session.interaction_id,
+            "track_id": session.track_id,
+            "source": session.source,
+            "started_ts": session.started_ts,
+            "deadline_ts": session.deadline_ts,
+            "remaining_s": max(0.0, session.deadline_ts - time.time()),
+            "bound": session.response is not None,
+        }
+
+    def bind_intake_response(
+        self, interaction_id: str | None, response: dict[str, Any]
+    ) -> bool:
+        """Bind only the first valid response to the one live interaction."""
+        session = self._active_interaction
+        if (
+            session is None
+            or not interaction_id
+            or interaction_id != session.interaction_id
+            or session.response is not None
+            or time.time() > session.deadline_ts
+            or self._interaction_state != "waiting_form"
+        ):
+            return False
+        session.response = dict(response)
+        self._interaction_event.set()
+        return True
+
+    def request_operator_approach(self) -> bool:
+        if self._policy_task is not None and not self._policy_task.done():
+            return False
+        if not self._robot_accepts_intervention(operator_requested=True):
+            return False
+        self._policy_task = asyncio.create_task(
+            self._run_care_sequence(
+                "operator-nearest",
+                query="person",
+                source="operator",
+            )
+        )
+        return True
+
+    def cancel_interaction(self) -> bool:
+        task = self._policy_task
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
     def request_intake_escort(self, response_id: str, track_id: str) -> bool:
         """Dispatch an explicit, consented intake escort without blocking HTTP."""
@@ -216,6 +307,21 @@ class RobotBridge:
         if not self._latest_status.get("connected", False):
             return SkillResult(False, "Robot is offline")
         return await self._call_skill(skill)
+
+    async def set_bedroom_at(
+        self, world_x: float, world_y: float, world_z: float = 0.0
+    ) -> SkillResult:
+        if not self._latest_status.get("connected", False):
+            return SkillResult(False, "Robot is offline")
+        return await self._call_skill(
+            "set_bedroom_at",
+            {"world_x": world_x, "world_y": world_y, "world_z": world_z},
+        )
+
+    async def set_bedroom_here(self) -> SkillResult:
+        if not self._latest_status.get("connected", False):
+            return SkillResult(False, "Robot is offline")
+        return await self._call_skill("set_bedroom_here")
 
     async def _run_forever(self) -> None:
         while not self._stopping:
@@ -243,6 +349,36 @@ class RobotBridge:
                 "enabled": True,
                 "connected": False,
             }
+
+        manual_input_seq = int(self._latest_status.get("manual_input_seq", 0))
+        control_mode = str(
+            self._latest_status.get("control_mode", "autonomous")
+        ).lower()
+        if control_mode == "manual" and self._last_control_mode != "manual":
+            self._fatigue_auto_takeover = False
+        self._last_control_mode = control_mode
+        if (
+            self._last_manual_input_seq is not None
+            and manual_input_seq != self._last_manual_input_seq
+            and self._policy_task is not None
+            and not self._policy_task.done()
+        ):
+            self._policy_task.cancel()
+        self._last_manual_input_seq = manual_input_seq
+        if (
+            self._policy_task is not None
+            and not self._policy_task.done()
+            and str(self._latest_status.get("mission_mode", "")).lower()
+            != "cruise"
+        ):
+            self._policy_task.cancel()
+
+        self._sync_detection_gate()
+        if not self._detection_enabled:
+            self._streaks.clear()
+            self._track_started.clear()
+            self._last_seen.clear()
+            return
 
         frame = self._get_latest_frame()
         tracks = frame.people or (
@@ -354,79 +490,269 @@ class RobotBridge:
         self._cooldown_until[track_id] = now + self._person_cooldown_seconds
         self._policy_task = asyncio.create_task(self._run_care_sequence(track_id))
 
-    def _robot_accepts_intervention(self) -> bool:
+    def _robot_accepts_intervention(
+        self, *, operator_requested: bool = False
+    ) -> bool:
         if not self._latest_status.get("connected", False):
             return False
         if self._latest_status.get("hold_reason"):
             return False
+        if str(self._latest_status.get("mission_mode", "")).lower() != "cruise":
+            return False
+        control_mode = str(
+            self._latest_status.get("control_mode", "autonomous")
+        ).lower()
+        if (
+            control_mode == "manual"
+            and not operator_requested
+            and not self._fatigue_auto_takeover
+        ):
+            return False
         behavior = str(self._latest_status.get("behavior", "")).lower()
-        return behavior not in {"hold", "manual", "escort", "intervene"}
+        disallowed = {"hold", "escort", "intervene"}
+        if control_mode != "manual":
+            disallowed.add("manual")
+        return behavior not in disallowed
 
-    async def _run_care_sequence(self, track_id: str) -> None:
+    def _sync_detection_gate(self) -> None:
+        status = self._latest_status
+        reason: str | None = None
+        if not status.get("connected", False):
+            reason = "robot_offline"
+        elif str(status.get("mission_mode", "")).lower() != "cruise":
+            reason = "exploration_mode"
+        elif self._interaction_state not in {
+            "idle",
+            "scheduled_scan",
+            "forced_scan",
+        }:
+            reason = "interaction_active"
+        elif status.get("hold_reason"):
+            reason = str(status["hold_reason"]).lower()
+        elif str(status.get("behavior", "")).lower() in {
+            "escort",
+            "intervene",
+            "return_home",
+            "hold",
+        }:
+            reason = f"behavior_{str(status.get('behavior')).lower()}"
+
+        enabled = reason is None
+        if enabled == self._detection_enabled and reason == self._detection_pause_reason:
+            return
+        self._detection_enabled = enabled
+        self._detection_pause_reason = reason
+        if self._set_detection_enabled is not None:
+            try:
+                self._set_detection_enabled(enabled, reason)
+            except Exception:
+                logger.exception("failed to update fatigue detector gate")
+
+    async def _set_interaction_state(self, state: str) -> None:
+        self._interaction_state = state
+        self._sync_detection_gate()
+        result = await self._call_skill("set_interaction_state", {"state": state})
+        if not result.ok:
+            logger.warning("robot interaction-state mirror failed: %s", result.text)
+
+    async def _speak(self, text: str) -> None:
+        result = await self._call_skill(
+            "speak", {"text": text, "blocking": True}
+        )
+        if not result.ok:
+            logger.warning("robot speech failed: %s", result.text)
+
+    async def _set_intake_status(self, response_id: Any, status: str) -> None:
+        if self._update_intake_status is None or not response_id:
+            return
+        await asyncio.to_thread(
+            self._update_intake_status, str(response_id), status
+        )
+
+    async def _farewell_and_retreat(self) -> None:
+        await self._set_interaction_state("farewell")
+        await self._speak("谢谢你。也请注意不要让自己太疲劳，记得适时休息。")
+        await self._call_skill(
+            "perform_dog_expression", {"expression": "Hello"}
+        )
+        await self._set_interaction_state("retreating")
+        retreat = await self._call_skill(
+            "relative_move", {"forward": -0.8, "left": 0.0, "degrees": 0.0}
+        )
+        if not retreat.ok:
+            logger.info("friendly retreat skipped: %s", retreat.text)
+
+    async def _run_care_sequence(
+        self,
+        track_id: str,
+        *,
+        query: str = "tired person",
+        source: str = "fatigue",
+    ) -> None:
         self._event(
             "TRIAGE",
             track_id,
-            "检测到持续疲劳信号 | Sustained fatigue signal detected",
+            (
+                "操作员请求接近最近的人 | Operator requested nearest-person approach"
+                if source == "operator"
+                else "检测到持续疲劳信号 | Sustained fatigue signal detected"
+            ),
         )
+        try:
+            await self._set_interaction_state("fatigue_candidate")
+            behavior = str(self._latest_status.get("behavior", "")).lower()
+            if behavior == "follow":
+                await self._call_skill("stop_following")
 
-        behavior = str(self._latest_status.get("behavior", "")).lower()
-        if behavior == "follow":
-            await self._call_skill("stop_following")
+            await self._set_interaction_state("approaching")
+            self._event(
+                "APPROACH",
+                track_id,
+                "正在接近并抬高相机 | Approaching and raising camera",
+            )
+            skill_args: dict[str, Any] = {"query": query}
+            if source == "fatigue":
+                locked = next(
+                    (
+                        assessment
+                        for assessment in reversed(self._recent)
+                        if assessment.track_id == track_id
+                        and assessment.bbox is not None
+                    ),
+                    None,
+                )
+                if locked is not None and locked.bbox is not None:
+                    skill_args["initial_bbox"] = list(locked.bbox)
+            intervene = await self._call_skill(
+                "potential_detected", skill_args
+            )
+            if not intervene.ok:
+                self._event(
+                    "RESET",
+                    track_id,
+                    f"接近请求被拒绝 | Intervention refused: {intervene.text}",
+                )
+                return
 
-        self._event(
-            "APPROACH",
-            track_id,
-            "正在接近并抬高相机 | Approaching and raising camera",
-        )
-        intervene = await self._call_skill(
-            "potential_detected", {"query": "tired person"}
-        )
-        if not intervene.ok:
+            await self._set_interaction_state("offering_form")
+            await self._speak(
+                "你好，我是守夜犬。你看起来有些疲劳，可以扫描我身上的二维码，"
+                "或者用手机碰一下NFC，填写一个简短问卷。如果你需要，我可以带你去休息。"
+            )
+
+            now = time.time()
+            session = InteractionSession(
+                interaction_id=uuid.uuid4().hex,
+                track_id=track_id,
+                source=source,
+                started_ts=now,
+                deadline_ts=now + self._intake_timeout_seconds,
+            )
+            self._active_interaction = session
+            self._interaction_event = asyncio.Event()
+            await self._set_interaction_state("waiting_form")
+            self._event(
+                "PRESCRIBE",
+                track_id,
+                (
+                    "等待扫码或NFC问卷 | Waiting for QR or NFC form "
+                    f"[interaction={session.interaction_id}]"
+                ),
+            )
+            try:
+                await asyncio.wait_for(
+                    self._interaction_event.wait(),
+                    timeout=self._intake_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                self._event(
+                    "RESET",
+                    track_id,
+                    "三分钟内没有问卷，友好告别 | Form timed out; saying goodbye",
+                )
+                await self._farewell_and_retreat()
+                return
+
+            response = session.response or {}
+            wants_guide = bool(
+                response.get("tiredness") == "tired"
+                and response.get("wants_escort")
+            )
+            if not wants_guide:
+                await self._set_intake_status(
+                    response.get("response_id"), "declined"
+                )
+                self._event(
+                    "RESET",
+                    track_id,
+                    (
+                        "访客不需要指引，友好告别 | Visitor declined guidance "
+                        f"[response={response.get('response_id', 'unknown')}]"
+                    ),
+                )
+                await self._farewell_and_retreat()
+                return
+
+            await self._set_interaction_state("escorting")
+            await self._speak("好的，请跟着我，我带你去休息。")
+            self._event(
+                "ESCORT",
+                track_id,
+                "护送前往Bedroom | Escorting to Bedroom",
+            )
+            escort = await self._call_skill("escort_to_sleeping_area")
+            if not escort.ok:
+                await self._set_intake_status(
+                    response.get("response_id"), "pending"
+                )
+                self._event(
+                    "RESET",
+                    track_id,
+                    f"护送请求被拒绝 | Escort refused: {escort.text}",
+                )
+                await self._farewell_and_retreat()
+                return
+
+            await self._set_intake_status(
+                response.get("response_id"), "escorted"
+            )
+            await self._set_interaction_state("arrived")
+            await self._speak("已经到休息的地方了，祝你睡个好觉。")
+            await self._call_skill(
+                "perform_dog_expression", {"expression": "Hello"}
+            )
+            self._event(
+                "NAP_REGISTERED",
+                track_id,
+                "已抵达Bedroom | Arrived at Bedroom",
+            )
+            await self._set_interaction_state("retreating")
+            await self._call_skill(
+                "relative_move", {"forward": -0.8, "left": 0.0, "degrees": 0.0}
+            )
+        except asyncio.CancelledError:
             self._event(
                 "RESET",
                 track_id,
-                f"接近请求被拒绝 | Intervention refused: {intervene.text}",
+                "操作员中断交互 | Interaction cancelled by operator",
             )
-            return
-
-        self._event(
-            "DIAGNOSE",
-            track_id,
-            "近距离疲劳确认完成 | Close-range fatigue check complete",
-        )
-        if not self._escort_evidence_is_sustained(track_id):
-            self._event(
-                "RESET",
-                track_id,
-                "证据未持续，返回巡逻 | Evidence did not persist; returning to patrol",
-            )
-            return
-
-        self._event(
-            "PRESCRIBE",
-            track_id,
-            "建议休息并请求护送 | Recommending rest and requesting escort",
-        )
-        self._event(
-            "ESCORT",
-            track_id,
-            "护送前往最近休息区 | Escorting to the nearest sleeping area",
-        )
-        escort = await self._call_skill("escort_to_sleeping_area")
-        if not escort.ok:
-            self._event(
-                "RESET",
-                track_id,
-                f"护送请求被拒绝 | Escort refused: {escort.text}",
-            )
-            return
-        self._event(
-            "NAP_REGISTERED",
-            track_id,
-            "已抵达休息区，开始安静休息 | Arrived at the sleeping area; rest started",
-        )
+            raise
+        finally:
+            self._active_interaction = None
+            self._interaction_event = asyncio.Event()
+            self._interaction_state = "idle"
+            self._sync_detection_gate()
+            try:
+                await self._call_skill(
+                    "set_interaction_state", {"state": "idle"}
+                )
+            except asyncio.CancelledError:
+                # Cancellation is already the terminal path; best-effort state
+                # mirroring must not keep the cancelled task alive.
+                pass
 
     async def _run_intake_escort(self, response_id: str, track_id: str) -> None:
+        await self._set_interaction_state("escorting")
         self._event(
             "ESCORT",
             track_id,
@@ -444,12 +770,14 @@ class RobotBridge:
                 track_id,
                 f"护送请求被拒绝 | Escort refused: {escort.text}",
             )
+            await self._set_interaction_state("idle")
             return
         self._event(
             "NAP_REGISTERED",
             track_id,
             "已抵达休息区，开始安静休息 | Arrived at the sleeping area; rest started",
         )
+        await self._set_interaction_state("idle")
 
     def _escort_evidence_is_sustained(self, track_id: str) -> bool:
         matching = [

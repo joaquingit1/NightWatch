@@ -2,11 +2,25 @@
 set -euo pipefail
 
 project_root=${0:A:h:h}
-dimos_root="$project_root/dimos"
+dimos_root="${DIMOS_ROOT:-${project_root:h}/dimos}"
 env_file="$project_root/robot.env"
 
-if [[ ! -f "$env_file" ]]; then
-  print -u2 "Missing $env_file"
+if [[ -f "$env_file" ]]; then
+  source "$env_file"
+else
+  print -u2 "No robot.env found; using variables already present in this shell."
+fi
+
+dimos_bin="${DIMOS_BIN:-}"
+if [[ -z "$dimos_bin" && "${CONDA_DEFAULT_ENV:-}" == "dimos" && -n "${CONDA_PREFIX:-}" ]]; then
+  dimos_bin="$CONDA_PREFIX/bin/dimos"
+fi
+if [[ -z "$dimos_bin" ]] && command -v conda >/dev/null 2>&1; then
+  conda_base=$(conda info --base 2>/dev/null || true)
+  [[ -n "$conda_base" ]] && dimos_bin="$conda_base/envs/dimos/bin/dimos"
+fi
+if [[ -z "$dimos_bin" || ! -x "$dimos_bin" ]]; then
+  print -u2 "The conda environment 'dimos' is unavailable. Activate it or set DIMOS_BIN."
   exit 1
 fi
 
@@ -44,11 +58,11 @@ fi
 # decode errors).  With no live `dimos run nightwatch.scout` above, any
 # root-owned orphan whose embedded sys.path names this checkout is stale.
 stale_forkserver_text=$(
-  ps -axo pid=,ppid=,command= | awk -v root="$project_root" '
+  ps -axo pid=,ppid=,command= | awk -v root="$project_root" -v dimos="$dimos_root" '
     $2 == 1 &&
     index($0, "multiprocessing.forkserver") &&
     index($0, root "/nightwatch") &&
-    index($0, root "/dimos") { print $1 }
+    index($0, dimos) { print $1 }
   '
 )
 if [[ -n "$stale_forkserver_text" ]]; then
@@ -72,9 +86,8 @@ if [[ -n "$stale_forkserver_text" ]]; then
   (( ${#remaining[@]} )) && kill -KILL "${remaining[@]}" 2>/dev/null || true
 fi
 
-source "$env_file"
 export PYTHONPATH="$project_root/nightwatch${PYTHONPATH:+:$PYTHONPATH}"
-export PATH="$dimos_root/.venv/bin:$PATH"
+export PATH="${dimos_bin:h}:$PATH"
 
 # The saved premap loads by default so every session resumes the floor it
 # already knows. NIGHTWATCH_PREMAP=off keeps navigation on the live map only;
@@ -111,7 +124,7 @@ cd "$dimos_root"
 # Ctrl-C stops the stack; the trap keeps this script alive so the session's
 # map still gets exported afterwards.
 trap 'print ""' INT
-.venv/bin/dimos run nightwatch.scout || true
+"$dimos_bin" run nightwatch.scout || true
 trap - INT
 
 # Persist this session's geometric map. A failed export must never break the

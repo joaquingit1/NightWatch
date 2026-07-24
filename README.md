@@ -77,6 +77,13 @@ current booth loop and must not be presented as a medical or safety device.
 
 **Perception** turns camera frames into a fatigue score. **Policy** runs a deterministic care loop (triage, approach, escort, rounds, wake). The **robot** executes movement and speech through [DimensionalOS](https://github.com/dimensionalOS/dimos) on a Unitree Go2. The **booth UI** shows what the system is thinking in real time. The **ledger** keeps an honest record of the night.
 
+The Go2 operator workbench is served at `http://127.0.0.1:5555/operator`.
+Its exploration/cruise modes, manual keyboard controls, fatigue interaction,
+QR/NFC binding, and unique Bedroom behavior are specified in
+[`prds/P11-operator-workbench-v2.zh-CN.md`](prds/P11-operator-workbench-v2.zh-CN.md).
+The form URL defaults to local development and can later be replaced with
+`NIGHTWATCH_PUBLIC_FORM_URL=https://...`.
+
 ---
 
 ## Technology
@@ -240,9 +247,10 @@ same anonymous track, minimum confidence/quality, a minimum observation time,
 and a per-person cooldown. It first calls `potential_detected`; only stronger
 sustained evidence then calls `escort_to_sleeping_area`. Every assessment is
 also shown on the robot operator page and written to a local JSONL audit trail.
-An explicit, consented QR intake request can also dispatch the escort directly
-when the booth operator acknowledges it; successful robot completion marks the
-request escorted.
+The QR/NFC form asks the visitor's current energy level and whether they want
+guidance. The first valid response bound to the live three-minute interaction
+can dispatch the escort directly; successful robot completion marks the request
+escorted.
 
 After creating `server/.venv`, `fatigue_fastapi_service/.venv`, and installing
 the client packages as described above, start all user-space services with:

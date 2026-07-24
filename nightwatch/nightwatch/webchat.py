@@ -22,9 +22,12 @@ forms in the noisy venue instead.
 import asyncio
 from collections import deque
 from collections.abc import Callable
+import html
 import math
+import os
+from pathlib import Path
 from queue import Empty, Full, Queue
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 import time
 from typing import Any, Protocol
 
@@ -37,9 +40,12 @@ from reactivex.disposable import Disposable, SingleAssignmentDisposable
 
 from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.web_human_input import WebInput
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.core.transport_factory import make_transport
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
@@ -122,6 +128,15 @@ _OPERATOR_ACTIONS: dict[str, dict[str, Any]] = {
     "sleep_area": {"tool": "escort_to_sleeping_area", "args": {}},
     "stop": {"tool": "stop_navigation", "args": {}},
     "stop_follow": {"tool": "stop_following", "args": {}},
+}
+_DIRECT_OPERATOR_ACTIONS = {
+    "mission_mode",
+    "control_mode",
+    "teleop",
+    "emergency_stop",
+    "scan_now",
+    "scan_settings",
+    "map_prompt",
 }
 
 _OPERATOR_HTML = """<!doctype html>
@@ -286,6 +301,12 @@ _OPERATOR_HTML = """<!doctype html>
 </body>
 </html>"""
 
+# Keep the complete workbench as an ordinary HTML asset so its controls and
+# browser safety logic can be reviewed independently from the Python server.
+_OPERATOR_HTML = Path(__file__).with_name("operator_console.html").read_text(
+    encoding="utf-8"
+)
+
 
 class LatestFrameRobotWebInterface(RobotWebInterface):
     """MJPEG server whose clients can never build a stale-frame backlog.
@@ -299,7 +320,9 @@ class LatestFrameRobotWebInterface(RobotWebInterface):
     def __init__(
         self,
         *args: Any,
-        operator_action: Callable[[str], bool] | None = None,
+        operator_action: (
+            Callable[[str, dict[str, Any]], tuple[bool, str] | bool] | None
+        ) = None,
         operator_status: Callable[[], dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -323,13 +346,22 @@ class LatestFrameRobotWebInterface(RobotWebInterface):
 
         @self.app.get("/operator", response_class=HTMLResponse)
         async def operator_console() -> HTMLResponse:
-            return HTMLResponse(_OPERATOR_HTML)
+            form_url = html.escape(
+                os.environ.get(
+                    "NIGHTWATCH_PUBLIC_FORM_URL",
+                    "http://localhost:3000/form",
+                ),
+                quote=True,
+            )
+            return HTMLResponse(
+                _OPERATOR_HTML.replace("__NIGHTWATCH_FORM_URL__", form_url)
+            )
 
         @self.app.post("/operator/action")
         async def operator_command(request: Request) -> JSONResponse:
             data = await request.json()
             action = str(data.get("action", ""))
-            if action not in _OPERATOR_ACTIONS:
+            if action not in _OPERATOR_ACTIONS and action not in _DIRECT_OPERATOR_ACTIONS:
                 return JSONResponse(
                     status_code=400,
                     content={"success": False, "message": f"Unknown action: {action}"},
@@ -339,16 +371,26 @@ class LatestFrameRobotWebInterface(RobotWebInterface):
                     status_code=503,
                     content={"success": False, "message": "Operator actions unavailable"},
                 )
-            ok = await asyncio.to_thread(self._operator_action, action)
+            arguments = {
+                key: value for key, value in data.items() if key != "action"
+            }
+            result = await asyncio.to_thread(
+                self._operator_action, action, arguments
+            )
+            if isinstance(result, tuple):
+                ok, message = result
+            else:
+                ok = bool(result)
+                message = (
+                    f"{action.replace('_', ' ').title()} sent."
+                    if ok
+                    else f"{action.replace('_', ' ').title()} was refused."
+                )
             return JSONResponse(
                 status_code=200 if ok else 409,
                 content={
                     "success": ok,
-                    "message": (
-                        f"{action.replace('_', ' ').title()} sent."
-                        if ok
-                        else f"{action.replace('_', ' ').title()} was refused."
-                    ),
+                    "message": message,
                 },
             )
 
@@ -576,6 +618,16 @@ def _message_text(msg: Any) -> str | None:
 
 class OperatorStatusSpec(Spec, Protocol):
     def curiosity_status(self) -> dict[str, Any]: ...
+    def set_mission_mode(self, mode: str) -> str: ...
+    def set_control_mode(self, mode: str) -> str: ...
+    def note_manual_input(self, sequence: int) -> str: ...
+    def request_fatigue_scan(self) -> str: ...
+    def set_patrol_scan_settings(
+        self, interval_s: float, duration_s: float
+    ) -> str: ...
+    def resolve_map_completion_prompt(
+        self, stay_exploring: bool = False
+    ) -> str: ...
 
 
 class WorldStatusSpec(Spec, Protocol):
@@ -589,18 +641,116 @@ class PersonMemoryStatusSpec(Spec, Protocol):
 class NightwatchWebInput(WebInput):
     agent: In[BaseMessage]
     color_image: In[Image]
+    tele_cmd_vel: Out[Twist]
     _agent_spec: AgentSpec
     _curiosity: OperatorStatusSpec
     _navigation: NavigationInterfaceSpec
     _world: WorldStatusSpec
     _follow: PersonMemoryStatusSpec
 
-    def _dispatch_operator_action(self, action: str) -> bool:
+    @staticmethod
+    def _accepted(message: Any) -> tuple[bool, str]:
+        text = str(message)
+        refused = any(
+            word in text.lower()
+            for word in ("refused", "unsupported", "failed", "ignored")
+        )
+        return not refused, text
+
+    def _publish_manual_twist(
+        self, sequence: int, x: float, y: float, wz: float
+    ) -> tuple[bool, str]:
+        with self._teleop_lock:
+            if sequence <= self._last_teleop_seq:
+                return False, "已忽略过期的手动控制报文。"
+            self._last_teleop_seq = sequence
+        try:
+            status = self._curiosity.curiosity_status()
+            if str(status.get("control_mode")) != "manual":
+                return False, "请先切换到手动接管模式。"
+            accepted, message = self._accepted(
+                self._curiosity.note_manual_input(sequence)
+            )
+            if not accepted:
+                return False, message
+            twist = Twist(
+                Vector3(
+                    max(-0.56, min(0.56, float(x))),
+                    max(-0.50, min(0.50, float(y))),
+                    0.0,
+                ),
+                Vector3(0.0, 0.0, max(-0.88, min(0.88, float(wz)))),
+            )
+            self.tele_cmd_vel.publish(twist)
+            with self._teleop_lock:
+                self._teleop_last_at = time.monotonic()
+                self._teleop_active = not twist.is_zero()
+            return True, "手动速度已更新。" if not twist.is_zero() else "机器人已停止。"
+        except Exception:
+            logger.exception("Operator teleop failed")
+            return False, "手动控制发送失败，已要求机器人停止。"
+
+    def _dispatch_operator_action(
+        self, action: str, arguments: dict[str, Any] | None = None
+    ) -> tuple[bool, str]:
+        arguments = arguments or {}
+        try:
+            if action == "mission_mode":
+                self._navigation.cancel_goal()
+                self.tele_cmd_vel.publish(Twist.zero())
+                return self._accepted(
+                    self._curiosity.set_mission_mode(str(arguments.get("mode", "")))
+                )
+            if action == "control_mode":
+                self._navigation.cancel_goal()
+                self.tele_cmd_vel.publish(Twist.zero())
+                return self._accepted(
+                    self._curiosity.set_control_mode(str(arguments.get("mode", "")))
+                )
+            if action == "teleop":
+                return self._publish_manual_twist(
+                    int(arguments.get("sequence", 0)),
+                    float(arguments.get("x", 0.0)),
+                    float(arguments.get("y", 0.0)),
+                    float(arguments.get("wz", 0.0)),
+                )
+            if action == "emergency_stop":
+                self._navigation.cancel_goal()
+                result = self._curiosity.set_control_mode("manual")
+                with self._teleop_lock:
+                    sequence = self._last_teleop_seq + 1
+                self._curiosity.note_manual_input(sequence)
+                self.tele_cmd_vel.publish(Twist.zero())
+                with self._teleop_lock:
+                    self._last_teleop_seq = sequence
+                    self._teleop_active = False
+                return True, f"紧急停止已执行。{result}"
+            if action == "scan_now":
+                return self._accepted(self._curiosity.request_fatigue_scan())
+            if action == "scan_settings":
+                return self._accepted(
+                    self._curiosity.set_patrol_scan_settings(
+                        float(arguments.get("interval_s", 90.0)),
+                        float(arguments.get("duration_s", 20.0)),
+                    )
+                )
+            if action == "map_prompt":
+                return self._accepted(
+                    self._curiosity.resolve_map_completion_prompt(
+                        bool(arguments.get("stay_exploring", False))
+                    )
+                )
+        except (TypeError, ValueError):
+            return False, "控制参数无效。"
+        except Exception:
+            logger.exception("Direct operator action failed", action=action)
+            return False, "机器人拒绝或无法执行该命令。"
+
         continuation = _OPERATOR_ACTIONS.get(action)
         if continuation is None:
-            return False
+            return False, f"未知工作台动作：{action}"
         try:
-            return bool(
+            ok = bool(
                 self._agent_spec.dispatch_continuation(
                     continuation,
                     {
@@ -609,9 +759,17 @@ class NightwatchWebInput(WebInput):
                     },
                 )
             )
+            return (
+                ok,
+                (
+                    f"{action.replace('_', ' ')} 已发送。"
+                    if ok
+                    else f"{action.replace('_', ' ')} 被机器人拒绝。"
+                ),
+            )
         except Exception:
             logger.exception("Operator action failed", action=action)
-            return False
+            return False, "动作执行失败。"
 
     def _operator_status(self) -> dict[str, Any]:
         try:
@@ -663,6 +821,12 @@ class NightwatchWebInput(WebInput):
         self._last_camera_capture_ts = 0.0
         self._world_status_checked_at = 0.0
         self._cached_world_status: dict[str, Any] = {}
+        self._teleop_lock = Lock()
+        self._teleop_stop_event = Event()
+        self._teleop_watchdog_thread: Thread | None = None
+        self._last_teleop_seq = 0
+        self._teleop_last_at = 0.0
+        self._teleop_active = False
 
         def _on_frame(img: Image) -> None:
             now = time.monotonic()
@@ -705,7 +869,43 @@ class NightwatchWebInput(WebInput):
         self._thread = Thread(target=self._web_interface.run, daemon=True)
         self._thread.start()
 
+        def _teleop_watchdog() -> None:
+            while not self._teleop_stop_event.wait(0.05):
+                with self._teleop_lock:
+                    expired = (
+                        self._teleop_active
+                        and time.monotonic() - self._teleop_last_at > 0.5
+                    )
+                    if expired:
+                        self._teleop_active = False
+                if expired:
+                    try:
+                        self.tele_cmd_vel.publish(Twist.zero())
+                    except Exception:
+                        logger.exception("Operator teleop watchdog stop failed")
+
+        self._teleop_watchdog_thread = Thread(
+            target=_teleop_watchdog,
+            name="nightwatch-operator-teleop-watchdog",
+            daemon=True,
+        )
+        self._teleop_watchdog_thread.start()
+
         logger.info(
             "Nightwatch operator started",
             operator_url="http://localhost:5555/operator",
         )
+
+    @rpc
+    def stop(self) -> None:
+        stop_event = getattr(self, "_teleop_stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+        try:
+            self.tele_cmd_vel.publish(Twist.zero())
+        except Exception:
+            logger.exception("Operator shutdown stop failed")
+        watchdog = getattr(self, "_teleop_watchdog_thread", None)
+        if watchdog is not None:
+            watchdog.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        super().stop()

@@ -15,6 +15,7 @@ IntakeStatus = Literal["pending", "acknowledged", "escorted", "declined"]
 class IntakeResponse:
     response_id: str
     session_id: str
+    interaction_id: str | None
     created_ts: float
     consent_analysis: bool
     tiredness: Tiredness
@@ -27,6 +28,7 @@ class IntakeResponse:
         return {
             "response_id": self.response_id,
             "session_id": self.session_id,
+            "interaction_id": self.interaction_id,
             "created_ts": self.created_ts,
             "consent_analysis": self.consent_analysis,
             "tiredness": self.tiredness,
@@ -54,6 +56,7 @@ class IntakeDatabase:
                 CREATE TABLE IF NOT EXISTS intake_responses (
                     response_id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    interaction_id TEXT,
                     created_ts REAL NOT NULL,
                     consent_analysis INTEGER NOT NULL,
                     tiredness TEXT NOT NULL,
@@ -66,6 +69,22 @@ class IntakeDatabase:
                     ON intake_responses (created_ts DESC);
                 CREATE INDEX IF NOT EXISTS idx_intake_pending_escort
                     ON intake_responses (status, wants_escort, created_ts DESC);
+                """
+            )
+            columns = {
+                str(row["name"])
+                for row in conn.execute(
+                    "PRAGMA table_info(intake_responses)"
+                ).fetchall()
+            }
+            if "interaction_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE intake_responses ADD COLUMN interaction_id TEXT"
+                )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_intake_interaction
+                    ON intake_responses (interaction_id, created_ts DESC)
                 """
             )
 
@@ -85,24 +104,22 @@ class IntakeDatabase:
         self,
         *,
         session_id: str,
+        interaction_id: str | None = None,
         consent_analysis: bool,
         tiredness: Tiredness,
         wants_escort: bool,
         name_alias: str | None = None,
         source: str = "qr_form",
     ) -> IntakeResponse:
-        if not consent_analysis:
-            status: IntakeStatus = "declined"
-            wants_escort = False
-            tiredness = "energized"
-        elif wants_escort:
-            status = "pending"
-        else:
-            status = "pending"
+        # UI-design intentionally contains only the tiredness and escort
+        # questions. Keep the legacy consent column for compatibility, but do
+        # not erase the two answers the visitor actually selected.
+        status: IntakeStatus = "pending"
 
         record = IntakeResponse(
             response_id=uuid.uuid4().hex,
             session_id=session_id,
+            interaction_id=interaction_id,
             created_ts=time.time(),
             consent_analysis=consent_analysis,
             tiredness=tiredness,
@@ -115,13 +132,14 @@ class IntakeDatabase:
             conn.execute(
                 """
                 INSERT INTO intake_responses (
-                    response_id, session_id, created_ts, consent_analysis,
+                    response_id, session_id, interaction_id, created_ts, consent_analysis,
                     tiredness, wants_escort, status, name_alias, source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.response_id,
                     record.session_id,
+                    record.interaction_id,
                     record.created_ts,
                     int(record.consent_analysis),
                     record.tiredness,
@@ -175,6 +193,7 @@ class IntakeDatabase:
         return IntakeResponse(
             response_id=row["response_id"],
             session_id=row["session_id"],
+            interaction_id=row["interaction_id"],
             created_ts=float(row["created_ts"]),
             consent_analysis=bool(row["consent_analysis"]),
             tiredness=row["tiredness"],
@@ -186,10 +205,11 @@ class IntakeDatabase:
 
 
 def routing_hint(
-    consent_analysis: bool, wants_escort: bool
+    consent_analysis: bool,
+    wants_escort: bool,
+    tiredness: Tiredness = "tired",
 ) -> Literal["escort", "observe", "declined"]:
-    if not consent_analysis:
-        return "declined"
-    if wants_escort:
+    del consent_analysis  # retained in the API solely for older clients
+    if wants_escort and tiredness == "tired":
         return "escort"
     return "observe"

@@ -16,11 +16,20 @@ const POV_LOOK_HEIGHT = 0.35;
 
 export type ViewMode = "orbit" | "pov";
 
+export interface WorldPosition {
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface LidarScene {
   updateCloud(frame: CloudFrame): void;
   updatePremap(frame: CloudFrame): void;
   updateScan(frame: CloudFrame): void;
   updatePose(pose: PoseMessage): void;
+  setBedroom(position: WorldPosition | null): void;
+  pickGround(clientX: number, clientY: number): WorldPosition | null;
+  getRobotPose(): WorldPosition | null;
   setViewMode(mode: ViewMode): void;
   getFps(): number;
   dispose(): void;
@@ -241,6 +250,27 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
   ring.position.z = 0.02;
   robotGroup.add(ring);
 
+  // --- unique Bedroom marker ---
+  const bedroomGroup = new THREE.Group();
+  bedroomGroup.visible = false;
+  worldGroup.add(bedroomGroup);
+  const bedroomSphereGeometry = new THREE.SphereGeometry(0.18, 18, 12);
+  const bedroomMaterial = new THREE.MeshBasicMaterial({ color: 0xf472b6 });
+  const bedroomSphere = new THREE.Mesh(bedroomSphereGeometry, bedroomMaterial);
+  bedroomSphere.position.z = 0.28;
+  bedroomGroup.add(bedroomSphere);
+  const bedroomRingGeometry = new THREE.RingGeometry(0.28, 0.36, 48);
+  const bedroomRingMaterial = new THREE.MeshBasicMaterial({
+    color: 0xf9a8d4,
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const bedroomRing = new THREE.Mesh(bedroomRingGeometry, bedroomRingMaterial);
+  bedroomRing.position.z = 0.035;
+  bedroomGroup.add(bedroomRing);
+
   // --- trail ---
   const trailPositions = new Float32Array(TRAIL_CAPACITY * 3);
   const trailColors = new Float32Array(TRAIL_CAPACITY * 3);
@@ -321,6 +351,10 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
   };
   const povEye = new THREE.Vector3();
   const povLook = new THREE.Vector3();
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const groundHit = new THREE.Vector3();
 
   function fitCameraToCloud(positions: Float32Array, count: number): void {
     let minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -503,6 +537,30 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
       appendTrailPoint(pose.x, pose.y, pose.z);
     },
 
+    setBedroom(position: WorldPosition | null): void {
+      bedroomGroup.visible = position !== null;
+      if (position) {
+        bedroomGroup.position.set(position.x, position.y, position.z);
+      }
+    },
+
+    pickGround(clientX: number, clientY: number): WorldPosition | null {
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      if (!raycaster.ray.intersectPlane(groundPlane, groundHit)) return null;
+      const local = worldGroup.worldToLocal(groundHit.clone());
+      return { x: local.x, y: local.y, z: 0 };
+    },
+
+    getRobotPose(): WorldPosition | null {
+      return hasPose
+        ? { x: poseTarget.x, y: poseTarget.y, z: poseTarget.z }
+        : null;
+    },
+
     getFps(): number {
       return fps;
     },
@@ -518,6 +576,8 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
       trailGeometry.dispose();
       coneGeometry.dispose();
       ringGeometry.dispose();
+      bedroomSphereGeometry.dispose();
+      bedroomRingGeometry.dispose();
       grid.geometry.dispose();
       pointsMaterial.dispose();
       premapMaterial.dispose();
@@ -525,6 +585,8 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
       trailMaterial.dispose();
       coneMaterial.dispose();
       ringMaterial.dispose();
+      bedroomMaterial.dispose();
+      bedroomRingMaterial.dispose();
       glowMaterial.dispose();
       gridMaterial.dispose();
       glowTexture.dispose();

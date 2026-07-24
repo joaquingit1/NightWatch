@@ -41,7 +41,14 @@ from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
-from nightwatch.contracts import BehaviorKind, BehaviorLease, RobotActivity
+from nightwatch.contracts import (
+    BehaviorKind,
+    BehaviorLease,
+    ControlMode,
+    InteractionState,
+    MissionMode,
+    RobotActivity,
+)
 from nightwatch.unitree import ensure_motion_ready, set_body_pitch
 
 logger = setup_logger()
@@ -101,6 +108,18 @@ class RelocSpec(Spec, Protocol):
 
 class CuriosityConfig(ModuleConfig):
     enabled: bool = True
+    # Product mission is explicit. Map maturity remains a fact exposed through
+    # map_phase; it no longer silently opts the product into people monitoring.
+    map_completion_prompt_s: float = 60.0
+    patrol_scan_interval_s: float = 90.0
+    patrol_scan_duration_s: float = 20.0
+    patrol_scan_interval_min_s: float = 30.0
+    patrol_scan_interval_max_s: float = 300.0
+    patrol_scan_duration_min_s: float = 10.0
+    patrol_scan_duration_max_s: float = 60.0
+    operator_settings_path: str = (
+        "assets/output/maps/nightwatch_operator_settings.json"
+    )
     # Exploration remains active through 6%. At 5% the supervisor cancels the
     # current autonomous leg and navigates to the saved launch origin; it lies
     # down only after arriving there.
@@ -296,6 +315,10 @@ class CuriositySupervisor(Module):
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._enabled = bool(self.config.enabled)
+        self._mission_mode = MissionMode.EXPLORATION
+        self._control_mode = ControlMode.AUTONOMOUS
+        self._interaction_state = InteractionState.IDLE
+        self._manual_input_seq = 0
         self._explicit_hold_reason: str | None = None
         self._agent_busy = False
         self._movement_intent_at = 0.0
@@ -335,6 +358,37 @@ class CuriositySupervisor(Module):
         self._patrolling = False
         self._last_exploration_status_at = 0.0
         self._prior_session_mapped = self._load_map_state()
+        self._map_completion_prompt_deadline = 0.0
+        self._map_completion_prompt_suppressed = False
+        operator_settings = self._load_operator_settings()
+        self._patrol_scan_interval_s = max(
+            self.config.patrol_scan_interval_min_s,
+            min(
+                self.config.patrol_scan_interval_max_s,
+                float(
+                    operator_settings.get(
+                        "patrol_interval_s",
+                        self.config.patrol_scan_interval_s,
+                    )
+                ),
+            ),
+        )
+        self._patrol_scan_duration_s = max(
+            self.config.patrol_scan_duration_min_s,
+            min(
+                self.config.patrol_scan_duration_max_s,
+                float(
+                    operator_settings.get(
+                        "scan_duration_s",
+                        self.config.patrol_scan_duration_s,
+                    )
+                ),
+            ),
+        )
+        self._patrol_active_elapsed_s = 0.0
+        self._last_tick_started_at = now
+        self._forced_scan_requested = False
+        self._scan_kind: str | None = None
 
         self._last_person_poll = 0.0
         self._close_streak = 0
@@ -465,6 +519,155 @@ class CuriositySupervisor(Module):
         return "Hold released; curious exploration is active."
 
     @skill
+    def set_mission_mode(self, mode: str) -> str:
+        """Select exploration-only mapping or the full Night Watch cruise."""
+        try:
+            selected = MissionMode(mode.strip().lower())
+        except ValueError:
+            return "Unsupported mission mode. Choose exploration or cruise."
+        with self._lock:
+            changed = selected is not self._mission_mode
+            self._mission_mode = selected
+            self._preempt_requested = True
+            self._forced_scan_requested = False
+            self._patrol_active_elapsed_s = 0.0
+            self._map_completion_prompt_deadline = 0.0
+            self._map_completion_prompt_suppressed = False
+            if selected is MissionMode.EXPLORATION:
+                self._interaction_state = InteractionState.IDLE
+        if changed:
+            return (
+                "Exploration mode selected; fatigue monitoring and automatic "
+                "people interactions are disabled."
+                if selected is MissionMode.EXPLORATION
+                else "Cruise mode selected; patrol and fatigue monitoring are enabled."
+            )
+        return f"Mission mode is already {selected.value}."
+
+    @skill
+    def set_control_mode(self, mode: str) -> str:
+        """Transfer ordinary motion between autonomy and the operator."""
+        try:
+            selected = ControlMode(mode.strip().lower())
+        except ValueError:
+            return "Unsupported control mode. Choose autonomous or manual."
+        with self._lock:
+            changed = selected is not self._control_mode
+            self._control_mode = selected
+            self._preempt_requested = True
+            self._forced_scan_requested = False
+            if selected is ControlMode.MANUAL:
+                # Manual control is above every non-safety behavior. Clearing
+                # leases prevents an interrupted escort from resuming when the
+                # browser releases a key several seconds later.
+                self._leases.clear()
+                self._interaction_state = InteractionState.IDLE
+        if changed:
+            return (
+                "Manual control selected; autonomous navigation is stopped."
+                if selected is ControlMode.MANUAL
+                else f"Autonomous control selected; {self._mission_mode.value} will resume."
+            )
+        return f"Control mode is already {selected.value}."
+
+    @skill
+    def note_manual_input(self, sequence: int) -> str:
+        """Record one ordered browser-control packet and preempt autonomy."""
+        seq = int(sequence)
+        with self._lock:
+            if self._control_mode is not ControlMode.MANUAL:
+                return "Manual input refused because autonomous control is active."
+            if seq <= self._manual_input_seq:
+                return "Stale manual input ignored."
+            self._manual_input_seq = seq
+            self._leases.clear()
+            self._interaction_state = InteractionState.IDLE
+            self._preempt_requested = True
+        return f"Manual input {seq} accepted."
+
+    @skill
+    def request_fatigue_scan(self) -> str:
+        """Stop and raise the camera for one operator-requested scan window."""
+        with self._lock:
+            if self._mission_mode is not MissionMode.CRUISE:
+                return "Fatigue scan refused because exploration mode disables detection."
+            if self._interaction_state not in {
+                InteractionState.IDLE,
+                InteractionState.SCHEDULED_SCAN,
+                InteractionState.FORCED_SCAN,
+            }:
+                return (
+                    "Fatigue scan refused while a person interaction or escort "
+                    "is active."
+                )
+            self._forced_scan_requested = True
+            self._preempt_requested = True
+        return "Immediate stop-and-look fatigue scan requested."
+
+    @skill
+    def set_patrol_scan_settings(
+        self, interval_s: float = 90.0, duration_s: float = 20.0
+    ) -> str:
+        """Update the cruise/scan cadence within the operator-safe limits."""
+        interval = max(
+            self.config.patrol_scan_interval_min_s,
+            min(self.config.patrol_scan_interval_max_s, float(interval_s)),
+        )
+        duration = max(
+            self.config.patrol_scan_duration_min_s,
+            min(self.config.patrol_scan_duration_max_s, float(duration_s)),
+        )
+        with self._lock:
+            self._patrol_scan_interval_s = interval
+            self._patrol_scan_duration_s = duration
+            self._patrol_active_elapsed_s = min(
+                self._patrol_active_elapsed_s, interval
+            )
+        self._save_operator_settings()
+        return (
+            f"Patrol scan cadence set to {interval:.0f}s moving and "
+            f"{duration:.0f}s observing."
+        )
+
+    @skill
+    def resolve_map_completion_prompt(self, stay_exploring: bool = False) -> str:
+        """Resolve the map-complete countdown from the operator console."""
+        with self._lock:
+            if not self._map_completion_prompt_deadline:
+                return "No map-completion prompt is active."
+            self._map_completion_prompt_deadline = 0.0
+            if stay_exploring:
+                self._map_completion_prompt_suppressed = True
+                return "Remaining in exploration mode until the operator changes it."
+            self._mission_mode = MissionMode.CRUISE
+            self._map_completion_prompt_suppressed = False
+            self._preempt_requested = True
+        return "Map completion accepted; cruise mode is active."
+
+    @skill
+    def set_interaction_state(self, state: str) -> str:
+        """Mirror the policy server's care-loop state for gating and status."""
+        try:
+            selected = InteractionState(state.strip().lower())
+        except ValueError:
+            return "Unsupported interaction state."
+        with self._lock:
+            if (
+                self._mission_mode is MissionMode.EXPLORATION
+                and selected is not InteractionState.IDLE
+            ):
+                return "Interaction refused because exploration mode is active."
+            self._interaction_state = selected
+            if selected not in {
+                InteractionState.IDLE,
+                InteractionState.SCHEDULED_SCAN,
+                InteractionState.FORCED_SCAN,
+            }:
+                self._forced_scan_requested = False
+                self._preempt_requested = True
+        return f"Interaction state set to {selected.value}."
+
+    @skill
     def lie_down_until_resumed(self) -> str:
         """Stop autonomy and lie down until the operator explicitly stands it."""
         with self._lock:
@@ -587,8 +790,84 @@ class CuriositySupervisor(Module):
     def curiosity_status(self) -> dict[str, Any]:
         """Return the current motion owner, holds, sensors, and liveness state."""
         status = asdict(self._activity_snapshot())
+        prompt_deadline = float(
+            getattr(self, "_map_completion_prompt_deadline", 0.0)
+        )
+        prompt_remaining = (
+            max(0.0, prompt_deadline - time.monotonic())
+            if prompt_deadline
+            else None
+        )
+        mission_mode = getattr(
+            self, "_mission_mode", MissionMode.EXPLORATION
+        )
+        interaction_state = getattr(
+            self, "_interaction_state", InteractionState.IDLE
+        )
+        fatigue_enabled = (
+            mission_mode is MissionMode.CRUISE
+            and interaction_state
+            in {
+                InteractionState.IDLE,
+                InteractionState.SCHEDULED_SCAN,
+                InteractionState.FORCED_SCAN,
+            }
+            and not getattr(self, "_explicit_hold_reason", None)
+            and not getattr(self, "_returning_home", False)
+        )
         status.update(
             {
+                "mission_mode": mission_mode.value,
+                "control_mode": getattr(
+                    self, "_control_mode", ControlMode.AUTONOMOUS
+                ).value,
+                "manual_input_seq": getattr(self, "_manual_input_seq", 0),
+                "interaction_state": interaction_state.value,
+                "fatigue_detection": "enabled" if fatigue_enabled else "disabled",
+                "fatigue_pause_reason": (
+                    None
+                    if fatigue_enabled
+                    else (
+                        "exploration_mode"
+                        if mission_mode is MissionMode.EXPLORATION
+                        else (
+                            "interaction_active"
+                            if interaction_state
+                            not in {
+                                InteractionState.IDLE,
+                                InteractionState.SCHEDULED_SCAN,
+                                InteractionState.FORCED_SCAN,
+                            }
+                            else getattr(self, "_explicit_hold_reason", None)
+                            or "safety_hold"
+                        )
+                    )
+                ),
+                "patrol_interval_s": float(
+                    getattr(
+                        self,
+                        "_patrol_scan_interval_s",
+                        self.config.patrol_scan_interval_s,
+                    )
+                ),
+                "scan_duration_s": float(
+                    getattr(
+                        self,
+                        "_patrol_scan_duration_s",
+                        self.config.patrol_scan_duration_s,
+                    )
+                ),
+                "patrol_elapsed_s": round(
+                    float(getattr(self, "_patrol_active_elapsed_s", 0.0)), 1
+                ),
+                "map_completion_prompt": (
+                    {
+                        "remaining_s": round(prompt_remaining, 1),
+                        "auto_mode": MissionMode.CRUISE.value,
+                    }
+                    if prompt_remaining is not None
+                    else None
+                ),
                 "home_xy": list(self._home_xy) if self._home_xy is not None else None,
                 "returning_home": self._returning_home,
                 "home_arrived": self._home_arrived,
@@ -820,6 +1099,9 @@ class CuriositySupervisor(Module):
 
     def _tick(self) -> None:
         now = time.monotonic()
+        previous_tick = float(getattr(self, "_last_tick_started_at", now))
+        tick_elapsed = max(0.0, min(1.0, now - previous_tick))
+        self._last_tick_started_at = now
         self._refresh_battery(now)
         following = self._is_following()
         nav_state = self._navigation_state()
@@ -830,6 +1112,12 @@ class CuriositySupervisor(Module):
             lease = self._top_lease_locked()
             enabled = self._enabled
             explicit_hold = self._explicit_hold_reason
+            mission_mode = getattr(
+                self, "_mission_mode", MissionMode.EXPLORATION
+            )
+            control_mode = getattr(
+                self, "_control_mode", ControlMode.AUTONOMOUS
+            )
             preempt = self._preempt_requested
             self._preempt_requested = False
             intent_active = bool(
@@ -867,6 +1155,21 @@ class CuriositySupervisor(Module):
             return
         if not self._sensors_ready(now):
             self._hold("SENSORS_NOT_READY")
+            return
+        # Manual control is an unconditional operator takeover below only the
+        # physical safety gates above. Browser velocity rides tele_cmd_vel;
+        # this supervisor stands every autonomous producer down.
+        if control_mode is ControlMode.MANUAL:
+            if self._forced_scan_requested or self._face_observation_until:
+                if self._maybe_scheduled_scan(now, nav_state, forced_only=True):
+                    return
+            self._stop_face_observation("manual control")
+            self._interrupt_dog_expression("manual control")
+            self._stop_exploration("manual control", cancel_goal=True)
+            self._stop_patrol("manual control")
+            if following:
+                self._request_follow_stop("manual control")
+            self._set_activity(BehaviorKind.MANUAL, "operator", False, None)
             return
         if lease is not None:
             self._stop_face_observation(f"leased to {lease.owner}")
@@ -911,21 +1214,71 @@ class CuriositySupervisor(Module):
             return
 
         self._refresh_map_phase(now)
+        mission_mode = getattr(
+            self, "_mission_mode", MissionMode.EXPLORATION
+        )
+        if mission_mode is MissionMode.EXPLORATION:
+            self._stop_face_observation("exploration mode")
+            self._interrupt_dog_expression("exploration mode")
+            self._stop_patrol("exploration mode")
+            if self._map_phase == "MAPPED":
+                self._stop_exploration("map complete", cancel_goal=True)
+                if not self._map_completion_prompt_suppressed:
+                    if not self._map_completion_prompt_deadline:
+                        self._map_completion_prompt_deadline = (
+                            now + self.config.map_completion_prompt_s
+                        )
+                        logger.info(
+                            "map completion awaiting operator",
+                            timeout_s=self.config.map_completion_prompt_s,
+                        )
+                    elif now >= self._map_completion_prompt_deadline:
+                        self._map_completion_prompt_deadline = 0.0
+                        self._mission_mode = MissionMode.CRUISE
+                        mission_mode = MissionMode.CRUISE
+                        logger.info(
+                            "map completion prompt expired; entering cruise"
+                        )
+                if mission_mode is MissionMode.EXPLORATION:
+                    self._set_activity(
+                        BehaviorKind.EXPLORE, "curiosity", False, None
+                    )
+                    return
+            else:
+                self._map_completion_prompt_deadline = 0.0
+                self._ensure_exploring(now)
+                moving_expected = (
+                    self._exploring
+                    and nav_state is not NavigationState.IDLE
+                )
+                if moving_expected and self._maybe_escape_stall(now):
+                    return
+                self._set_activity(
+                    BehaviorKind.EXPLORE,
+                    "curiosity",
+                    moving_expected,
+                    None,
+                )
+                return
+
+        # Cruise is the only mission that can schedule or act on people.
+        if self._patrolling and nav_state is not NavigationState.IDLE:
+            self._patrol_active_elapsed_s += tick_elapsed
+        if self._maybe_scheduled_scan(now, nav_state):
+            return
         if self._maybe_face_observation(now, nav_state):
             return
-        # This is a dog first: a close person triggers a short curious follow
-        # in every phase, including active mapping. The follow branch above
-        # enforces the timebox and _start_curious_follow sets a cooldown, so
-        # mapping remains the dominant background activity.
+        # Optional social follow belongs only to cruise. Exploration already
+        # returned above and therefore remains a strict map-building mission.
         self._curious_follow_started = 0.0
         # Short-circuit on the flag so no observe_person RPC is made when curious
-        # follow is disabled: the dog ignores nearby people while it maps/patrols.
+        # follow is disabled: the dog ignores nearby people while it patrols.
         if self.config.curious_follow_enabled and self._person_is_close(now):
             self._interrupt_dog_expression("close person")
             self._start_curious_follow()
             return
 
-        if self._map_phase == "MAPPED":
+        if mission_mode is MissionMode.CRUISE:
             if self._maybe_hand_expression(now, nav_state):
                 return
             if self._maybe_dog_expression(now, nav_state):
@@ -945,28 +1298,7 @@ class CuriositySupervisor(Module):
             self._enforce_liveness(now, nav_state)
             return
 
-        # Discovery owns motion between dog moments. Scheduled expression
-        # breaks pause frontier travel briefly so the robot keeps reading as a
-        # curious dog while it maps; the explorer restarts on the next tick.
-        if self._maybe_hand_expression(now, nav_state):
-            return
-        if self._maybe_dog_expression(
-            now, nav_state, allow_break=self.config.dog_expressions_while_exploring
-        ):
-            return
-        self._ensure_exploring(now)
-        # The explorer can spend 10-20 s ranking a mature merged map before it
-        # publishes a goal. During that CPU-bound interval navigation is IDLE
-        # and the body is *supposed* to be stationary. Calling it motion here
-        # made both watchdogs kill the explorer before its first post-lock goal,
-        # then the restart repeated the same mistake forever.
-        moving_expected = self._exploring and nav_state is not NavigationState.IDLE
-        # Same wedged-in-clutter escape while exploring. Reached only after the
-        # lease/follow/intent/hold/expression guards above returned, so it never
-        # runs while another owner or a dog gesture holds the body.
-        if moving_expected and self._maybe_escape_stall(now):
-            return
-        self._set_activity(BehaviorKind.EXPLORE, "curiosity", moving_expected, None)
+        self._hold("MISSION_MODE_INVALID")
 
         # The base-state invariant applies while a stopped explorer thread is
         # finishing frontier computation too. Keep doing bounded curiosity
@@ -1305,6 +1637,19 @@ class CuriositySupervisor(Module):
             logger.exception("curiosity follow state query failed")
             return False
 
+    def _request_follow_stop(self, reason: str) -> None:
+        now = time.monotonic()
+        if now - self._follow_stop_requested_at < 0.5:
+            return
+        self._follow_stop_requested_at = now
+        try:
+            self._agent_spec.dispatch_continuation(
+                {"tool": "stop_following", "args": {}},
+                {"_silent": True, "label": reason},
+            )
+        except Exception:
+            logger.exception("curiosity follow stop failed", reason=reason)
+
     def _ensure_exploring(self, now: float) -> None:
         was_exploring = self._exploring
         try:
@@ -1569,6 +1914,42 @@ class CuriositySupervisor(Module):
         except Exception:
             logger.exception("curiosity map state save failed")
 
+    def _load_operator_settings(self) -> dict[str, float]:
+        try:
+            data = json.loads(
+                Path(self.config.operator_settings_path).read_text(
+                    encoding="utf-8"
+                )
+            )
+            return {
+                "patrol_interval_s": float(data["patrol_interval_s"]),
+                "scan_duration_s": float(data["scan_duration_s"]),
+            }
+        except FileNotFoundError:
+            return {}
+        except Exception:
+            logger.exception("operator settings load failed")
+            return {}
+
+    def _save_operator_settings(self) -> None:
+        try:
+            path = Path(self.config.operator_settings_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(
+                json.dumps(
+                    {
+                        "patrol_interval_s": self._patrol_scan_interval_s,
+                        "scan_duration_s": self._patrol_scan_duration_s,
+                        "saved_at": time.time(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            tmp.replace(path)
+        except Exception:
+            logger.exception("operator settings save failed")
+
     def _fast_start_from_premap(self) -> bool:
         """Skip re-exploration once ICP has aligned the saved premap.
 
@@ -1629,6 +2010,9 @@ class CuriositySupervisor(Module):
             self._exploring = False
             self._prior_session_mapped = False
         elif status.get("active"):
+            if self._map_phase == "MAPPED":
+                self._map_completion_prompt_suppressed = False
+                self._map_completion_prompt_deadline = 0.0
             self._map_phase = "EXPLORING"
         elif self._map_phase == "MAPPED":
             try:
@@ -1643,6 +2027,12 @@ class CuriositySupervisor(Module):
                 )
                 self._stop_patrol("coverage has no reachable local goal")
                 self._map_phase = "EXPLORING"
+                # A previously dismissed completion prompt applies only to the
+                # map state that existed at that moment. Reopening exploration
+                # means new work can be discovered, so its next completion must
+                # be allowed to prompt the operator again.
+                self._map_completion_prompt_suppressed = False
+                self._map_completion_prompt_deadline = 0.0
                 self._retry_not_before = now
 
     def _ensure_patrolling(self, now: float) -> None:
@@ -2090,6 +2480,107 @@ class CuriositySupervisor(Module):
             reason=reason,
         )
 
+    def _maybe_scheduled_scan(
+        self,
+        now: float,
+        nav_state: NavigationState,
+        *,
+        forced_only: bool = False,
+    ) -> bool:
+        """Run one bounded stop-and-look window, even when no person is visible."""
+        active_until = float(getattr(self, "_face_observation_until", 0.0))
+        scan_kind = getattr(self, "_scan_kind", None)
+        if active_until and scan_kind in {"scheduled", "forced"}:
+            if now < active_until:
+                state = (
+                    InteractionState.FORCED_SCAN
+                    if scan_kind == "forced"
+                    else InteractionState.SCHEDULED_SCAN
+                )
+                self._interaction_state = state
+                self._set_activity(
+                    BehaviorKind.OBSERVE,
+                    "operator_scan" if scan_kind == "forced" else "scheduled_scan",
+                    False,
+                    None,
+                )
+                return True
+            self._stop_face_observation("scan window complete")
+            self._scan_kind = None
+            self._interaction_state = InteractionState.IDLE
+            self._patrol_active_elapsed_s = 0.0
+            self._retry_not_before = now + 0.5
+            return False
+
+        forced = bool(getattr(self, "_forced_scan_requested", False))
+        due = (
+            not forced_only
+            and float(getattr(self, "_patrol_active_elapsed_s", 0.0))
+            >= float(
+                getattr(
+                    self,
+                    "_patrol_scan_interval_s",
+                    self.config.patrol_scan_interval_s,
+                )
+            )
+        )
+        if not forced and not due:
+            return False
+
+        self._forced_scan_requested = False
+        self._stop_face_observation("starting scan")
+        self._interrupt_dog_expression("starting scan")
+        self._stop_exploration("starting scan", cancel_goal=True)
+        self._stop_patrol("starting scan")
+        try:
+            self._navigation.cancel_goal()
+        except Exception:
+            logger.exception("scan navigation cancel failed")
+        self._publish_stop()
+        try:
+            ensure_motion_ready(self._connection)
+            self._face_observation_pitch_active = bool(
+                set_body_pitch(
+                    self._connection,
+                    self.config.face_observation_pitch_rad,
+                )
+            )
+        except Exception:
+            logger.exception("scan camera pitch failed")
+            self._face_observation_pitch_active = False
+
+        self._face_observation_key = None
+        self._face_observation_bbox = None
+        self._face_observation_candidate = None
+        self._face_observation_streak = 0
+        duration = float(
+            getattr(
+                self,
+                "_patrol_scan_duration_s",
+                self.config.patrol_scan_duration_s,
+            )
+        )
+        self._face_observation_until = now + duration
+        self._scan_kind = "forced" if forced else "scheduled"
+        self._interaction_state = (
+            InteractionState.FORCED_SCAN
+            if forced
+            else InteractionState.SCHEDULED_SCAN
+        )
+        self._set_activity(
+            BehaviorKind.OBSERVE,
+            "operator_scan" if forced else "scheduled_scan",
+            False,
+            None,
+        )
+        logger.info(
+            "fatigue scan started",
+            kind=self._scan_kind,
+            duration_s=duration,
+            camera_raised=self._face_observation_pitch_active,
+        )
+        return True
+
     def _maybe_face_observation(self, now: float, nav_state: NavigationState) -> bool:
         """Frame one visible visitor during a natural patrol idle gap.
 
@@ -2101,8 +2592,9 @@ class CuriositySupervisor(Module):
         active_until = float(getattr(self, "_face_observation_until", 0.0))
         if active_until:
             if now < active_until:
+                self._interaction_state = InteractionState.SCHEDULED_SCAN
                 self._set_activity(
-                    BehaviorKind.PATROL,
+                    BehaviorKind.OBSERVE,
                     "face_observation",
                     False,
                     None,
@@ -2114,6 +2606,8 @@ class CuriositySupervisor(Module):
 
         if (
             not self.config.face_observation_enabled
+            or getattr(self, "_mission_mode", MissionMode.EXPLORATION)
+            is not MissionMode.CRUISE
             or self._map_phase not in {"EXPLORING", "MAPPED"}
             or nav_state is not NavigationState.IDLE
             or now < float(getattr(self, "_retry_not_before", 0.0))
@@ -2232,7 +2726,8 @@ class CuriositySupervisor(Module):
             duration_s=self.config.face_observation_s,
             camera_raised=self._face_observation_pitch_active,
         )
-        self._set_activity(BehaviorKind.PATROL, "face_observation", False, None)
+        self._interaction_state = InteractionState.SCHEDULED_SCAN
+        self._set_activity(BehaviorKind.OBSERVE, "face_observation", False, None)
         return True
 
     def _stop_face_observation(self, reason: str) -> None:
@@ -2255,6 +2750,11 @@ class CuriositySupervisor(Module):
         self._face_observation_pitch_active = False
         self._face_observation_candidate = None
         self._face_observation_streak = 0
+        if getattr(self, "_interaction_state", InteractionState.IDLE) in {
+            InteractionState.SCHEDULED_SCAN,
+            InteractionState.FORCED_SCAN,
+        }:
+            self._interaction_state = InteractionState.IDLE
         logger.info(
             "face observation stopped",
             subject=subject,
@@ -2407,6 +2907,15 @@ class CuriositySupervisor(Module):
             hold_reason=self._hold_reason,
             map_phase=self._map_phase,
             battery_soc=self._battery_soc,
+            mission_mode=getattr(
+                self, "_mission_mode", MissionMode.EXPLORATION
+            ),
+            control_mode=getattr(
+                self, "_control_mode", ControlMode.AUTONOMOUS
+            ),
+            interaction_state=getattr(
+                self, "_interaction_state", InteractionState.IDLE
+            ),
         )
 
 

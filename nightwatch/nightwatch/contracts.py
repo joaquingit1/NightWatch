@@ -25,6 +25,36 @@ class BehaviorKind(str, Enum):
     MANUAL = "manual"
 
 
+class MissionMode(str, Enum):
+    """Operator-selected product mission, independent of map maturity."""
+
+    EXPLORATION = "exploration"
+    CRUISE = "cruise"
+
+
+class ControlMode(str, Enum):
+    """Who currently owns ordinary motion."""
+
+    AUTONOMOUS = "autonomous"
+    MANUAL = "manual"
+
+
+class InteractionState(str, Enum):
+    """Deterministic care-loop phase surfaced to the operator."""
+
+    IDLE = "idle"
+    SCHEDULED_SCAN = "scheduled_scan"
+    FORCED_SCAN = "forced_scan"
+    FATIGUE_CANDIDATE = "fatigue_candidate"
+    APPROACHING = "approaching"
+    OFFERING_FORM = "offering_form"
+    WAITING_FORM = "waiting_form"
+    FAREWELL = "farewell"
+    ESCORTING = "escorting"
+    ARRIVED = "arrived"
+    RETREATING = "retreating"
+
+
 @dataclass(frozen=True, slots=True)
 class BehaviorLease:
     owner: str
@@ -46,6 +76,9 @@ class RobotActivity:
     hold_reason: str | None
     map_phase: str
     battery_soc: int | None
+    mission_mode: MissionMode = MissionMode.EXPLORATION
+    control_mode: ControlMode = ControlMode.AUTONOMOUS
+    interaction_state: InteractionState = InteractionState.IDLE
 
 
 @dataclass(frozen=True, slots=True)

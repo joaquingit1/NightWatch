@@ -90,7 +90,13 @@ async def lifespan(app: FastAPI):
             min_observation_seconds=settings.robot_min_observation_seconds,
             consecutive_windows=settings.robot_consecutive_windows,
             person_cooldown_seconds=settings.robot_person_cooldown_seconds,
+            intake_timeout_seconds=settings.robot_intake_timeout_seconds,
             update_intake_status=app.state.intake_db.update_status,
+            set_detection_enabled=(
+                app.state.score_source.set_enabled
+                if isinstance(app.state.score_source, LiveScoreSource)
+                else None
+            ),
         )
         app.state.robot_bridge = robot_bridge
         await robot_bridge.start()

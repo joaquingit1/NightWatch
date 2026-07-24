@@ -1,9 +1,8 @@
-"""escort_to_sleeping_area: the uninterruptible "take me to bed" escort.
+"""escort_to_sleeping_area: the guarded "take me to Bedroom" escort.
 
-This is the go-home command's sibling with one hard promise: once it starts it
-cannot be distracted. No curiosity, no dog gestures, no person-follow, no
-suspicious-subject wave protocol may steal the base out from under it. It just
-walks the person to the NEAREST known sleeping area and stops.
+Autonomous behaviors cannot distract an active escort, but the operator's
+manual takeover and safety holds always remain above it. It walks the person
+to the one operator-selected Bedroom and stops.
 
 Uninterruptibility is bought entirely with an existing mechanism, not new
 arbitration code: the escort holds a priority-60 ``escort`` behavior lease on
@@ -65,9 +64,9 @@ class EscortLeaseSpec(Spec, Protocol):
 
 
 class SleepingAreaSpec(Spec, Protocol):
-    """The one world-model query the escort needs: nearest area of a type."""
+    """The one world-model query the escort needs: the unique Bedroom."""
 
-    def nearest_area(self, area_type: str, x: float, y: float) -> dict | None: ...
+    def bedroom_destination(self, x: float, y: float) -> dict | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +168,7 @@ def run_escort(
     traveled = 0.0
     last = pose0
     arrived_flag = False
+    authority_lost = False
     goal_attempts = 0
 
     def say(text: str, failure_msg: str) -> None:
@@ -194,7 +194,9 @@ def run_escort(
                 say(start_line, "escort start speech failed")
             goal_deadline = min(now() + per_goal_timeout_s, overall_deadline)
             while now() < goal_deadline:
-                renew()
+                if renew() is False:
+                    authority_lost = True
+                    break
                 pose = get_pose()
                 if pose is not None:
                     if last is not None:
@@ -207,6 +209,8 @@ def run_escort(
                     arrived_flag = True
                     break
                 sleep(tick_s)
+            if authority_lost:
+                break
 
         duration = now() - start
         if arrived_flag:
@@ -233,8 +237,13 @@ def run_escort(
             )
             message = (
                 f"Escort ended without reaching sleeping area '{area_id}' "
-                f"({source}) after {goal_attempts} goal attempt(s), "
-                f"{traveled:.1f} m, {duration:.1f}s."
+                f"({source}) because operator/safety authority took over."
+                if authority_lost
+                else (
+                    f"Escort ended without reaching sleeping area '{area_id}' "
+                    f"({source}) after {goal_attempts} goal attempt(s), "
+                    f"{traveled:.1f} m, {duration:.1f}s."
+                )
             )
         return EscortResult(
             found=True,
@@ -363,12 +372,12 @@ class EscortSkill(Module):
         """
         pose0 = self._get_pose()
         x0, y0 = pose0 if pose0 is not None else (0.0, 0.0)
-        area = self._world.nearest_area("sleeping_area", x0, y0)
+        area = self._world.bedroom_destination(x0, y0)
         if area is None:
-            logger.info("escort: no sleeping area known")
+            logger.info("escort: Bedroom unavailable")
             return (
-                "No sleeping area is known yet; explore or tag one first, then "
-                "I can escort you there."
+                "No Bedroom is available in the current map frame; mark it on "
+                "the 3D map before requesting an escort."
             )
 
         acquired = self._curiosity.acquire_behavior(
@@ -417,6 +426,11 @@ class EscortSkill(Module):
             start_line=self.config.start_text,
             arrival_line=self.config.arrival_line,
         )
+        if not result.arrived:
+            try:
+                self._navigation.cancel_goal()
+            except Exception:
+                logger.exception("escort cancellation failed")
         logger.info(
             "escort finished",
             arrived=result.arrived,

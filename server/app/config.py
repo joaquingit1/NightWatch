@@ -40,6 +40,7 @@ class Settings:
     robot_min_observation_seconds: float
     robot_consecutive_windows: int
     robot_person_cooldown_seconds: float
+    robot_intake_timeout_seconds: float
     intake_db_path: str
     intake_operator_key: str | None
     lidar_bridge_ws_url: str
@@ -47,7 +48,17 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    cors_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+    cors_raw = os.getenv(
+        "CORS_ORIGINS",
+        ",".join(
+            (
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:5555",
+                "http://127.0.0.1:5555",
+            )
+        ),
+    )
     return Settings(
         demo_mode=os.getenv("DEMO_MODE", "live"),
         camera_source=os.getenv("CAMERA_SOURCE", "webcam"),
@@ -91,6 +102,9 @@ def load_settings() -> Settings:
         ),
         robot_person_cooldown_seconds=float(
             os.getenv("ROBOT_PERSON_COOLDOWN_SECONDS", "180.0")
+        ),
+        robot_intake_timeout_seconds=float(
+            os.getenv("ROBOT_INTAKE_TIMEOUT_SECONDS", "180.0")
         ),
         intake_db_path=os.getenv("INTAKE_DB_PATH", "data/nightwatch.db"),
         intake_operator_key=os.getenv("INTAKE_OPERATOR_KEY") or None,

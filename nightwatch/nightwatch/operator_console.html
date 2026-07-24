@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>守夜犬工作台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Courier New", Courier, monospace;
+      --paper: #f2efe7;
+      --paper-deep: #e6e0d3;
+      --ink: #090909;
+      --cobalt: #173ed1;
+      --orange: #ff4b13;
+      --acid: #f2e84b;
+      --mint: #9fe2c2;
+      --muted: #5f5a51;
+      --danger: #e13123;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper-deep); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(rgba(9, 9, 9, .055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(9, 9, 9, .055) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .28;
+      z-index: 20;
+      background-image:
+        repeating-linear-gradient(8deg, transparent 0 9px, rgba(9, 9, 9, .025) 9px 10px),
+        repeating-linear-gradient(97deg, transparent 0 13px, rgba(9, 9, 9, .02) 13px 14px);
+      mix-blend-mode: multiply;
+    }
+    main { width: min(1540px, 100%); margin: auto; padding: 20px 22px 34px; }
+    header, .row, .split, .mode, .video-head, .settings { display: flex; gap: 9px; align-items: center; }
+    header {
+      position: relative;
+      justify-content: space-between;
+      min-height: 148px;
+      margin-bottom: 20px;
+      padding: 18px 22px 16px;
+      overflow: hidden;
+      color: var(--paper);
+      background: var(--cobalt);
+      border: 4px solid var(--ink);
+      box-shadow: 9px 9px 0 var(--ink);
+    }
+    header::after {
+      content: "CONTROL / CONTROL / CONTROL /";
+      position: absolute;
+      right: -28px;
+      bottom: -9px;
+      color: var(--orange);
+      font: 900 2.2rem/1 Impact, Haettenschweiler, "Arial Black", sans-serif;
+      letter-spacing: -.04em;
+      transform: rotate(-5deg);
+      white-space: nowrap;
+    }
+    header > div { position: relative; z-index: 1; }
+    .header-index {
+      margin-bottom: 8px;
+      font-size: .72rem;
+      font-weight: 900;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      font: 900 clamp(3.4rem, 8vw, 7.8rem)/.72 Impact, Haettenschweiler, "Arial Black", sans-serif;
+      letter-spacing: -.07em;
+      text-transform: uppercase;
+    }
+    header .hint {
+      margin-top: 17px;
+      color: var(--paper);
+      font-weight: 900;
+      letter-spacing: .18em;
+    }
+    h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      font: 900 1rem/1 "Arial Black", Arial, sans-serif;
+      letter-spacing: -.02em;
+      text-transform: uppercase;
+    }
+    h2::before {
+      content: "■";
+      color: var(--orange);
+      font-size: .9em;
+    }
+    .live {
+      position: relative;
+      z-index: 2;
+      align-self: flex-start;
+      padding: 9px 12px;
+      color: var(--ink);
+      background: var(--mint);
+      border: 3px solid var(--ink);
+      box-shadow: 4px 4px 0 var(--ink);
+      font-size: .74rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .layout { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(390px, .58fr); gap: 20px; }
+    .stack { display: grid; gap: 18px; align-content: start; }
+    .panel {
+      position: relative;
+      background: rgba(242, 239, 231, .96);
+      border: 4px solid var(--ink);
+      padding: 14px;
+      box-shadow: 7px 7px 0 var(--ink);
+    }
+    .stack > .panel:nth-child(even) { background: var(--paper-deep); }
+    .video-head {
+      justify-content: space-between;
+      margin: -14px -14px 12px;
+      padding: 10px 12px;
+      border-bottom: 4px solid var(--ink);
+      background: var(--acid);
+    }
+    .video-head h2 { margin: 0; }
+    .video-wrap {
+      position: relative;
+      background: var(--ink);
+      border: 4px solid var(--ink);
+      overflow: hidden;
+      min-height: 260px;
+    }
+    .video-wrap img { width: 100%; min-height: 260px; max-height: 62vh; display: block; aspect-ratio: 16/9; object-fit: contain; }
+    .video-wrap::before,
+    .video-wrap::after {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      width: 22px;
+      height: 22px;
+      pointer-events: none;
+    }
+    .video-wrap::before { top: 9px; left: 9px; border-top: 3px solid var(--orange); border-left: 3px solid var(--orange); }
+    .video-wrap::after { right: 9px; bottom: 9px; border-right: 3px solid var(--orange); border-bottom: 3px solid var(--orange); }
+    .overlay {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      z-index: 3;
+      max-width: calc(100% - 24px);
+      padding: 8px 10px;
+      background: var(--orange);
+      color: var(--ink);
+      border: 3px solid var(--ink);
+      box-shadow: 4px 4px 0 var(--ink);
+      font-size: .74rem;
+      font-weight: 900;
+      display: none;
+    }
+    .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; margin-top: 12px; border: 3px solid var(--ink); }
+    .metric {
+      min-width: 0;
+      padding: 8px 9px;
+      background: var(--paper);
+      border-right: 2px solid var(--ink);
+      border-bottom: 2px solid var(--ink);
+    }
+    .metric:nth-child(5n) { border-right: 0; }
+    .metric:nth-last-child(-n + 5) { border-bottom: 0; }
+    .metric span { display: block; color: var(--muted); font-size: .62rem; font-weight: 900; text-transform: uppercase; }
+    .metric b { display: block; overflow: hidden; text-overflow: ellipsis; font-size: .82rem; white-space: nowrap; }
+    button, a.button {
+      min-height: 42px;
+      border: 3px solid var(--ink);
+      border-radius: 0;
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 3px 3px 0 var(--ink);
+      font-family: "Arial Black", Arial, sans-serif;
+      font-size: .74rem;
+      font-weight: 900;
+      letter-spacing: -.01em;
+      cursor: pointer;
+      padding: 8px 10px;
+      text-decoration: none;
+      text-align: center;
+      text-transform: uppercase;
+      transition: transform 90ms ease, box-shadow 90ms ease, background 90ms ease;
+    }
+    button:hover, a.button:hover { background: var(--acid); transform: translate(-1px, -1px); box-shadow: 5px 5px 0 var(--ink); }
+    button:active, a.button:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink); }
+    button.active { background: var(--cobalt); color: white; }
+    button.primary { background: var(--orange); }
+    button.danger { background: var(--danger); color: white; }
+    button.warn { background: var(--acid); }
+    button:disabled { cursor: not-allowed; opacity: .34; filter: grayscale(1); transform: none; box-shadow: 2px 2px 0 var(--ink); }
+    .mode { display: grid; grid-template-columns: 1fr 1fr; margin-bottom: 9px; }
+    .mode button { min-height: 62px; }
+    button small { font-family: "Courier New", monospace; font-weight: 700; }
+    .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .move { min-height: 58px; touch-action: none; user-select: none; }
+    .actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+    kbd {
+      float: right;
+      padding: 1px 5px;
+      color: var(--paper);
+      background: var(--ink);
+      border: 0;
+      border-radius: 0;
+      font: 700 .64rem "Courier New", monospace;
+    }
+    .settings { flex-wrap: wrap; font-size: .78rem; color: var(--muted); font-weight: 900; }
+    input[type=number] {
+      width: 78px;
+      padding: 8px;
+      background: white;
+      border: 3px solid var(--ink);
+      color: var(--ink);
+      border-radius: 0;
+      font: 900 .8rem "Courier New", monospace;
+    }
+    input[type=checkbox] { width: 18px; height: 18px; }
+    #status {
+      min-height: 54px;
+      padding: 11px;
+      background: var(--acid);
+      color: var(--ink);
+      border: 3px solid var(--ink);
+      font-size: .8rem;
+      font-weight: 900;
+    }
+    .people { display: grid; gap: 6px; margin-top: 9px; }
+    .person {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      padding: 7px 9px;
+      background: white;
+      border: 2px solid var(--ink);
+      font: 700 .75rem "Courier New", monospace;
+    }
+    .score { color: var(--orange); font-weight: 900; }
+    #chat {
+      height: 170px;
+      overflow: auto;
+      white-space: pre-wrap;
+      background: var(--ink);
+      color: var(--paper);
+      border: 3px solid var(--ink);
+      padding: 10px;
+      font: .8rem/1.45 "Courier New", monospace;
+    }
+    .user { color: #86a4ff; margin-top: 6px; }
+    .robot { color: var(--acid); margin-top: 6px; }
+    form { display: flex; gap: 7px; margin-top: 7px; }
+    form input {
+      flex: 1;
+      min-width: 0;
+      padding: 10px;
+      border-radius: 0;
+      border: 3px solid var(--ink);
+      background: white;
+      color: var(--ink);
+      font: 700 16px "Courier New", monospace;
+    }
+    form input:focus { outline: 4px solid var(--orange); outline-offset: -4px; }
+    .hint { color: var(--muted); font-size: .7rem; font-weight: 700; margin-top: 8px; }
+    dialog {
+      width: min(500px, calc(100% - 28px));
+      color: var(--ink);
+      background: var(--paper);
+      border: 4px solid var(--ink);
+      border-radius: 0;
+      box-shadow: 10px 10px 0 var(--orange);
+      padding: 20px;
+    }
+    dialog::backdrop { background: rgba(23, 62, 209, .78); }
+    dialog h2 { font-size: 1.25rem; }
+    dialog p { color: var(--muted); margin: 10px 0 18px; line-height: 1.5; font-weight: 700; }
+    dialog .row { justify-content: flex-end; }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(3, 1fr); }
+      .metric, .metric:nth-child(5n), .metric:nth-last-child(-n + 5) { border-right: 2px solid var(--ink); border-bottom: 2px solid var(--ink); }
+      .metric:nth-child(3n) { border-right: 0; }
+      .metric:nth-last-child(-n + 1) { border-bottom: 0; }
+    }
+    @media (max-width: 560px) {
+      main { padding: 10px 10px 24px; }
+      header { min-height: 130px; padding: 14px; box-shadow: 5px 5px 0 var(--ink); }
+      h1 { font-size: 3.5rem; }
+      header::after { font-size: 1.35rem; }
+      .live { max-width: 45%; }
+      .actions { grid-template-columns: repeat(2, 1fr); }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .metric:nth-child(3n) { border-right: 2px solid var(--ink); }
+      .metric:nth-child(2n) { border-right: 0; }
+      .metric:nth-last-child(-n + 2) { border-bottom: 0; }
+      .panel { box-shadow: 4px 4px 0 var(--ink); }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <p class="header-index">OPERATOR SYSTEM / UNIT 01 / 夜间行动终端</p>
+      <h1>守夜犬</h1>
+      <p class="hint">NIGHT WATCH / OPERATOR CONSOLE</p>
+    </div>
+    <span class="live" id="linkState">● 正在连接机器人</span>
+  </header>
+  <div class="layout">
+    <div class="stack">
+      <section class="panel">
+        <div class="video-head">
+          <h2>机器人视野 / FATIGUE INDEX</h2>
+          <div class="row">
+            <button id="analysisMode" class="active" onclick="setVideoMode('analysis')">分析</button>
+            <button id="rawMode" onclick="setVideoMode('raw')">原始</button>
+          </div>
+        </div>
+        <div class="video-wrap">
+          <img id="robotVideo" alt="机器人相机视频">
+          <div id="videoOverlay" class="overlay"></div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><span>任务模式</span><b id="mission">—</b></div>
+          <div class="metric"><span>控制模式</span><b id="control">—</b></div>
+          <div class="metric"><span>当前行为</span><b id="behavior">—</b></div>
+          <div class="metric"><span>运动所有者</span><b id="owner">—</b></div>
+          <div class="metric"><span>疲劳检测</span><b id="fatigue">—</b></div>
+          <div class="metric"><span>交互阶段</span><b id="interaction">—</b></div>
+          <div class="metric"><span>电量</span><b id="battery">—</b></div>
+          <div class="metric"><span>导航</span><b id="navigation">—</b></div>
+          <div class="metric"><span>地图</span><b id="mapPhase">—</b></div>
+          <div class="metric"><span>相机延迟</span><b id="cameraAge">—</b></div>
+        </div>
+        <div id="people" class="people"><div class="person"><span>暂无人脸指标</span></div></div>
+      </section>
+      <section class="panel">
+        <h2>基础运动 / MANUAL MOTION</h2>
+        <div class="controls">
+          <button class="move" data-move="left">左移 <kbd>A</kbd></button>
+          <button class="move" data-move="forward">前进 <kbd>W</kbd></button>
+          <button class="move" data-move="right">右移 <kbd>D</kbd></button>
+          <button class="move" data-move="turnLeft">左转 <kbd>Q</kbd></button>
+          <button class="danger" onclick="emergencyStop()">紧急停止 <kbd>Space</kbd></button>
+          <button class="move" data-move="turnRight">右转 <kbd>E</kbd></button>
+          <span></span>
+          <button class="move" data-move="backward">后退 <kbd>S</kbd></button>
+          <span></span>
+        </div>
+        <p class="hint">Shift 为受限快速档，Ctrl 为慢速精细档。控制报文中断超过 500 ms，机器人端自动停止。</p>
+      </section>
+      <section class="panel">
+        <h2>姿态与任务动作 / ACTION MATRIX</h2>
+        <div class="actions">
+          <button onclick="act('stand_up')">站起 <kbd>1</kbd></button>
+          <button onclick="act('lie_down')">趴下保持 <kbd>2</kbd></button>
+          <button onclick="act('sit')">坐下 <kbd>3</kbd></button>
+          <button onclick="act('wave')">招手 <kbd>4</kbd></button>
+          <button onclick="act('stretch')">玩耍鞠躬 <kbd>5</kbd></button>
+          <button onclick="act('tail_wag')">摇屁股 <kbd>6</kbd></button>
+          <button onclick="act('happy')">开心动作 <kbd>7</kbd></button>
+          <button onclick="act('paw')">扒地 <kbd>8</kbd></button>
+          <button class="primary cruise-only" onclick="act('scan_now')">立即仰头检测 <kbd>F</kbd></button>
+          <button class="primary cruise-only" onclick="approachNearest()">接近最近的人 <kbd>N</kbd></button>
+          <button onclick="act('stop_follow')">停止跟随</button>
+          <button class="danger" onclick="act('stop')">停止导航</button>
+          <a class="button" href="http://localhost:3000/lidar" target="_blank">三维地图 <kbd>L</kbd></a>
+          <a class="button" href="__NIGHTWATCH_FORM_URL__" target="_blank">休息问卷</a>
+        </div>
+      </section>
+    </div>
+    <aside class="stack">
+      <section class="panel">
+        <h2>任务模式 / MISSION</h2>
+        <div class="mode">
+          <button id="modeExploration" onclick="setMission('exploration')">探索模式<br><small>只建图</small></button>
+          <button id="modeCruise" onclick="setMission('cruise')">巡航模式<br><small>检测与互动</small></button>
+        </div>
+        <h2>控制模式 / AUTHORITY</h2>
+        <div class="mode">
+          <button id="controlAutonomous" onclick="setControl('autonomous')">自主行动</button>
+          <button id="controlManual" onclick="setControl('manual')">手动接管 <kbd>M</kbd></button>
+        </div>
+        <label class="row hint">
+          <input id="takeover" type="checkbox" onchange="setAutoTakeover(this.checked)">
+          手动巡航时允许疲劳告警自动接管
+        </label>
+      </section>
+      <section class="panel">
+        <h2>巡航检测节奏 / CADENCE</h2>
+        <div class="settings">
+          <label>巡航 <input id="patrolInterval" type="number" min="30" max="300" step="10" value="90"> 秒</label>
+          <label>仰头检测 <input id="scanDuration" type="number" min="10" max="60" step="5" value="20"> 秒</label>
+          <button onclick="saveScanSettings()">保存</button>
+        </div>
+        <p class="hint">默认自主巡航 90 秒后停下仰头检测 20 秒，只累计真实巡航运动时间。</p>
+      </section>
+      <section class="panel">
+        <h2>命令状态 / COMMAND LOG</h2>
+        <div id="status">工作台已就绪。</div>
+      </section>
+      <section class="panel">
+        <h2>机器人对话 / DIRECT LINK</h2>
+        <div id="chat"></div>
+        <form id="ask">
+          <input id="query" autocomplete="off" placeholder="告诉机器人要做什么…" required>
+          <button class="primary">发送</button>
+        </form>
+        <p class="hint">输入框聚焦时所有键盘控制都会禁用。</p>
+      </section>
+    </aside>
+  </div>
+</main>
+<dialog id="mapDialog">
+  <h2>地图探索已完成</h2>
+  <p>将在 <b id="mapCountdown">60</b> 秒后自动切换到巡航模式。你也可以继续探索，等待出现新的未知区域。</p>
+  <div class="row">
+    <button onclick="resolveMapPrompt(true)">继续探索</button>
+    <button class="primary" onclick="resolveMapPrompt(false)">现在开始巡航</button>
+  </div>
+</dialog>
+<script>
+  const API_BASE = 'http://127.0.0.1:8000';
+  const RAW_VIDEO = '/video_feed/camera';
+  const ANALYSIS_VIDEO = API_BASE + '/video_feed/annotated';
+  const statusEl = document.getElementById('status');
+  const video = document.getElementById('robotVideo');
+  const videoOverlay = document.getElementById('videoOverlay');
+  const mapDialog = document.getElementById('mapDialog');
+  let statusSnapshot = {};
+  let videoMode = 'analysis';
+  // Epoch-based start keeps packets ordered across page reloads and old tabs.
+  let manualSequence = Date.now() * 1000;
+  let movementTimer = null;
+  let movementKeys = new Set();
+  let movementButtons = new Set();
+  let lastMovementSignature = '';
+  let serverOnline = false;
+  let mapPromptSeen = false;
+  let analysisFallback = false;
+  let policyInteractionText = '';
+
+  function setStatus(message) { statusEl.textContent = message; }
+  function setText(id, value) { document.getElementById(id).textContent = value == null || value === '' ? '—' : value; }
+  function line(css, text) {
+    const div = document.createElement('div');
+    div.className = css; div.textContent = text;
+    document.getElementById('chat').appendChild(div);
+    document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+  }
+  function isTyping() {
+    const tag = document.activeElement?.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable;
+  }
+  async function command(action, args = {}) {
+    const response = await fetch('/operator/action', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action, ...args}),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.message || '命令被拒绝');
+    return data;
+  }
+  async function act(action, args = {}) {
+    setStatus('正在执行…');
+    try {
+      const data = await command(action, args);
+      setStatus(data.message);
+    } catch (error) {
+      setStatus('操作失败：' + error.message);
+    }
+  }
+  async function setMission(mode) {
+    stopMovement();
+    await act('mission_mode', {mode});
+    refreshStatus();
+  }
+  async function setControl(mode) {
+    stopMovement();
+    await act('control_mode', {mode});
+    if (mode === 'manual') {
+      document.getElementById('takeover').checked = false;
+      setAutoTakeover(false);
+    }
+    refreshStatus();
+  }
+  async function emergencyStop() {
+    movementKeys.clear(); movementButtons.clear(); stopMovement();
+    await act('emergency_stop');
+    refreshStatus();
+  }
+  async function saveScanSettings() {
+    await act('scan_settings', {
+      interval_s: Number(document.getElementById('patrolInterval').value),
+      duration_s: Number(document.getElementById('scanDuration').value),
+    });
+  }
+  async function setAutoTakeover(enabled) {
+    try {
+      const response = await fetch(API_BASE + '/api/robot/fatigue-auto-takeover', {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({enabled}),
+      });
+      if (!response.ok) throw new Error('策略服务不可用');
+      setStatus(enabled ? '手动疲劳自动接管已开启。' : '手动疲劳自动接管已关闭。');
+    } catch (error) {
+      document.getElementById('takeover').checked = false;
+      setStatus('设置失败：' + error.message);
+    }
+  }
+  async function approachNearest() {
+    try {
+      const response = await fetch(API_BASE + '/api/robot/approach-nearest', {method:'POST'});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || '请求被拒绝');
+      setStatus('正在接近最近的人并开始后续交互。');
+    } catch (error) { setStatus('操作失败：' + error.message); }
+  }
+  async function resolveMapPrompt(stay) {
+    await act('map_prompt', {stay_exploring: stay});
+    mapDialog.close(); mapPromptSeen = false;
+  }
+  function setVideoMode(mode) {
+    videoMode = mode;
+    analysisFallback = false;
+    document.getElementById('analysisMode').classList.toggle('active', mode === 'analysis');
+    document.getElementById('rawMode').classList.toggle('active', mode === 'raw');
+    video.onerror = mode === 'analysis' ? () => {
+      video.onerror = null; video.src = RAW_VIDEO;
+      analysisFallback = true;
+      videoOverlay.style.display = 'block';
+      videoOverlay.textContent = '疲劳模型离线，已回退到原始视频';
+    } : null;
+    video.src = (mode === 'analysis' ? ANALYSIS_VIDEO : RAW_VIDEO) + '?t=' + Date.now();
+  }
+  function movementVector() {
+    const active = new Set([...movementKeys, ...movementButtons]);
+    let x = 0, y = 0, wz = 0;
+    if (active.has('forward')) x += .45;
+    if (active.has('backward')) x -= .45;
+    if (active.has('left')) y += .4;
+    if (active.has('right')) y -= .4;
+    if (active.has('turnLeft')) wz += .7;
+    if (active.has('turnRight')) wz -= .7;
+    const boost = movementKeys.has('boost') ? 1.25 : (movementKeys.has('slow') ? .45 : 1);
+    return {x: x * boost, y: y * boost, wz: wz * boost};
+  }
+  async function sendMovement() {
+    const v = movementVector();
+    const signature = `${v.x.toFixed(3)}:${v.y.toFixed(3)}:${v.wz.toFixed(3)}`;
+    if (statusSnapshot.control_mode !== 'manual' && signature !== '0.000:0.000:0.000') {
+      setStatus('请先切换到手动接管。'); stopMovement(); return;
+    }
+    if (signature === '0.000:0.000:0.000' && signature === lastMovementSignature) return;
+    lastMovementSignature = signature;
+    try {
+      await command('teleop', {sequence: ++manualSequence, ...v});
+    } catch (error) {
+      stopMovement(); setStatus('手动控制失败：' + error.message);
+    }
+  }
+  function startMovement() {
+    if (!movementTimer) movementTimer = window.setInterval(sendMovement, 100);
+    sendMovement();
+  }
+  function stopMovement() {
+    if (movementTimer) window.clearInterval(movementTimer);
+    movementTimer = null;
+    const wasMoving = lastMovementSignature !== '' && lastMovementSignature !== '0.000:0.000:0.000';
+    lastMovementSignature = '';
+    if (wasMoving || statusSnapshot.control_mode === 'manual') {
+      command('teleop', {sequence: ++manualSequence, x:0, y:0, wz:0}).catch(() => {});
+    }
+  }
+  document.querySelectorAll('[data-move]').forEach(button => {
+    const name = button.dataset.move;
+    const begin = event => { event.preventDefault(); movementButtons.add(name); startMovement(); };
+    const end = event => { event.preventDefault(); movementButtons.delete(name); movementButtons.size ? sendMovement() : stopMovement(); };
+    button.addEventListener('pointerdown', begin);
+    button.addEventListener('pointerup', end);
+    button.addEventListener('pointercancel', end);
+    button.addEventListener('pointerleave', end);
+  });
+  const movementMap = {w:'forward', s:'backward', a:'left', d:'right', q:'turnLeft', e:'turnRight'};
+  const actionMap = {'1':'stand_up','2':'lie_down','3':'sit','4':'wave','5':'stretch','6':'tail_wag','7':'happy','8':'paw'};
+  window.addEventListener('keydown', event => {
+    if (isTyping()) return;
+    const key = event.key.toLowerCase();
+    if (key in movementMap) {
+      event.preventDefault(); movementKeys.add(movementMap[key]); startMovement(); return;
+    }
+    if (event.key === 'Shift') { movementKeys.add('boost'); return; }
+    if (event.key === 'Control') { movementKeys.add('slow'); return; }
+    if (event.repeat) return;
+    if (event.code === 'Space') { event.preventDefault(); emergencyStop(); }
+    else if (key === 'm') setControl(statusSnapshot.control_mode === 'manual' ? 'autonomous' : 'manual');
+    else if (key === 'f') act('scan_now');
+    else if (key === 'n') approachNearest();
+    else if (key === 'l') window.open('http://localhost:3000/lidar', '_blank');
+    else if (key in actionMap) act(actionMap[key]);
+  });
+  window.addEventListener('keyup', event => {
+    const key = event.key.toLowerCase();
+    if (key in movementMap) movementKeys.delete(movementMap[key]);
+    if (event.key === 'Shift') movementKeys.delete('boost');
+    if (event.key === 'Control') movementKeys.delete('slow');
+    movementKeys.size ? sendMovement() : stopMovement();
+  });
+  window.addEventListener('blur', () => { movementKeys.clear(); movementButtons.clear(); stopMovement(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { movementKeys.clear(); movementButtons.clear(); stopMovement(); }
+  });
+
+  async function refreshPolicyStatus() {
+    try {
+      const [robotResponse, scoreResponse] = await Promise.all([
+        fetch(API_BASE + '/api/robot/status', {cache:'no-store'}),
+        fetch(API_BASE + '/api/score', {cache:'no-store'}),
+      ]);
+      if (!robotResponse.ok || !scoreResponse.ok) throw new Error();
+      const robot = await robotResponse.json();
+      const score = await scoreResponse.json();
+      serverOnline = true;
+      document.getElementById('takeover').checked = Boolean(robot.fatigue_auto_takeover);
+      const people = Array.isArray(score.people) && score.people.length ? score.people : (score.person_id ? [score] : []);
+      const box = document.getElementById('people');
+      box.innerHTML = '';
+      if (!people.length) box.innerHTML = '<div class="person"><span>当前画面未检测到有效人脸</span></div>';
+      people.forEach(person => {
+        const row = document.createElement('div'); row.className = 'person';
+        const id = document.createElement('span'); id.textContent = person.person_id || '匿名目标';
+        const scoreEl = document.createElement('span'); scoreEl.className = 'score'; scoreEl.textContent = '疲劳 ' + Number(person.score || 0).toFixed(0);
+        const quality = document.createElement('span'); quality.textContent = '质量 ' + Number(person.quality || person.confidence || 0).toFixed(2);
+        row.append(id, scoreEl, quality); box.appendChild(row);
+      });
+      if (robot.active_interaction?.remaining_s != null) {
+        policyInteractionText = `${robot.interaction_state} · ${Math.ceil(robot.active_interaction.remaining_s)}s`;
+      } else {
+        policyInteractionText = robot.interaction_state && robot.interaction_state !== 'idle'
+          ? robot.interaction_state
+          : '';
+      }
+    } catch (_) {
+      serverOnline = false;
+      policyInteractionText = '';
+      document.getElementById('people').innerHTML = '<div class="person"><span>疲劳服务离线，指标已清空</span></div>';
+    }
+  }
+  async function refreshStatus() {
+    try {
+      const response = await fetch('/operator/status', {cache:'no-store'});
+      const status = await response.json();
+      if (!response.ok) throw new Error();
+      statusSnapshot = status;
+      setText('mission', status.mission_mode === 'cruise' ? '巡航' : '探索');
+      setText('control', status.control_mode === 'manual' ? '手动' : '自主');
+      setText('behavior', status.behavior);
+      setText('owner', status.owner);
+      setText('fatigue', status.fatigue_detection === 'enabled' ? '运行' : `暂停 · ${status.fatigue_pause_reason || '策略'}`);
+      setText('interaction', policyInteractionText || status.interaction_state);
+      setText('battery', status.battery_soc == null ? null : status.battery_soc + '%');
+      setText('navigation', status.navigation);
+      setText('mapPhase', status.map_phase);
+      setText('cameraAge', status.camera_age_ms == null ? null : Math.round(status.camera_age_ms) + ' ms');
+      document.getElementById('modeExploration').classList.toggle('active', status.mission_mode === 'exploration');
+      document.getElementById('modeCruise').classList.toggle('active', status.mission_mode === 'cruise');
+      document.getElementById('controlAutonomous').classList.toggle('active', status.control_mode === 'autonomous');
+      document.getElementById('controlManual').classList.toggle('active', status.control_mode === 'manual');
+      document.querySelectorAll('.move').forEach(button => button.disabled = status.control_mode !== 'manual');
+      document.querySelectorAll('.cruise-only').forEach(button => button.disabled = status.mission_mode !== 'cruise');
+      document.getElementById('patrolInterval').value = Math.round(status.patrol_interval_s || 90);
+      document.getElementById('scanDuration').value = Math.round(status.scan_duration_s || 20);
+      const prompt = status.map_completion_prompt;
+      if (prompt) {
+        document.getElementById('mapCountdown').textContent = Math.ceil(prompt.remaining_s);
+        if (!mapDialog.open && !mapPromptSeen) { mapPromptSeen = true; mapDialog.showModal(); }
+      } else if (mapDialog.open) { mapDialog.close(); mapPromptSeen = false; }
+      videoOverlay.style.display = status.fatigue_detection === 'enabled' && !analysisFallback ? 'none' : 'block';
+      if (analysisFallback) {
+        videoOverlay.textContent = '疲劳模型离线，已回退到原始视频';
+      } else if (status.fatigue_detection !== 'enabled') {
+        videoOverlay.textContent = '疲劳检测暂停：' + (status.fatigue_pause_reason || '策略控制');
+      }
+      const robotConnected = status.robot_connected !== false;
+      document.getElementById('linkState').textContent = robotConnected
+        ? '● 机器人控制已连接' + (serverOnline ? ' · 疲劳服务已连接' : ' · 疲劳服务离线')
+        : '● 离线安全预览 · 所有硬件命令已拦截';
+      document.getElementById('linkState').style.color = robotConnected ? '#090909' : '#ffffff';
+      document.getElementById('linkState').style.background = robotConnected
+        ? (serverOnline ? '#9fe2c2' : '#f2e84b')
+        : '#e13123';
+      if (!robotConnected) stopMovement();
+      if (status.hold_reason) setStatus('机器人保持：' + status.hold_reason);
+    } catch (_) {
+      document.getElementById('linkState').textContent = '● 机器人控制离线';
+      document.getElementById('linkState').style.color = '#ffffff';
+      document.getElementById('linkState').style.background = '#e13123';
+      stopMovement();
+    }
+  }
+  const events = new EventSource('/text_stream/agent_responses');
+  events.onmessage = event => line('robot', 'robot > ' + event.data);
+  document.getElementById('ask').addEventListener('submit', async event => {
+    event.preventDefault();
+    const input = document.getElementById('query'); const query = input.value.trim();
+    if (!query) return;
+    line('user', 'you > ' + query); input.value = '';
+    const body = new FormData(); body.append('query', query);
+    setStatus('机器人正在处理请求…');
+    try {
+      const response = await fetch('/submit_query', {method:'POST', body});
+      const data = await response.json(); setStatus(data.success ? '请求已发送。' : data.message);
+    } catch (error) { setStatus('发送失败：' + error.message); }
+  });
+  setVideoMode('analysis');
+  refreshStatus(); refreshPolicyStatus();
+  window.setInterval(refreshStatus, 1000);
+  window.setInterval(refreshPolicyStatus, 1000);
+</script>
+</body>
+</html>

@@ -203,6 +203,8 @@ class LiveScoreSource(ScoreSource):
         self._frame = _idle_frame(time.time())
         self._task: asyncio.Task | None = None
         self._stopping = False
+        self._enabled = True
+        self._pause_reason: str | None = None
 
     def tick(self) -> None:
         # State is updated asynchronously by the background stream task.
@@ -210,6 +212,25 @@ class LiveScoreSource(ScoreSource):
 
     def latest(self) -> FatigueFrame:
         return self._frame
+
+    def set_enabled(self, enabled: bool, reason: str | None = None) -> None:
+        enabled = bool(enabled)
+        if enabled == self._enabled and (enabled or reason == self._pause_reason):
+            return
+        self._enabled = enabled
+        self._pause_reason = None if enabled else (reason or "policy_paused")
+        if not enabled:
+            self._frame = _idle_frame(
+                time.time(), source_status=f"paused:{self._pause_reason}"
+            )
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @property
+    def pause_reason(self) -> str | None:
+        return self._pause_reason
 
     async def start(self) -> None:
         self._stopping = False
@@ -243,6 +264,9 @@ class LiveScoreSource(ScoreSource):
             await ws.recv()  # discard the initial "ready" message
             logger.info("connected to fatigue service at %s", self._ws_url)
             while not self._stopping:
+                if not self._enabled:
+                    await asyncio.sleep(0.1)
+                    continue
                 frame = self._get_frame()
                 if frame is None:
                     await asyncio.sleep(0.05)

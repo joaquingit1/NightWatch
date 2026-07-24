@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import type { CloudFrame, PoseMessage } from "./protocol";
 import { RobotCamFeed } from "./RobotCamFeed";
-import { createLidarScene, type LidarScene, type ViewMode } from "./scene";
+import {
+  createLidarScene,
+  type LidarScene,
+  type ViewMode,
+  type WorldPosition,
+} from "./scene";
 import { type ConnState, useLidarSocket } from "./useLidarSocket";
 
 const STATUS_STYLES: Record<ConnState, { label: string; className: string }> = {
@@ -24,6 +29,8 @@ const STATUS_STYLES: Record<ConnState, { label: string; className: string }> = {
   },
 };
 
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
 export function LidarViewer() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<LidarScene | null>(null);
@@ -38,6 +45,9 @@ export function LidarViewer() {
   const [now, setNow] = useState(() => Date.now());
   const [viewMode, setViewMode] = useState<ViewMode>("orbit");
   const [camVisible, setCamVisible] = useState(true);
+  const [selectingBedroom, setSelectingBedroom] = useState(false);
+  const [bedroom, setBedroom] = useState<WorldPosition | null>(null);
+  const [bedroomStatus, setBedroomStatus] = useState("Bedroom 尚未标记");
 
   const hud = useLidarSocket({
     onCloud: (frame) => {
@@ -79,6 +89,122 @@ export function LidarViewer() {
   }, []);
 
   useEffect(() => {
+    sceneRef.current?.setBedroom(bedroom);
+  }, [bedroom]);
+
+  useEffect(() => {
+    let active = true;
+    const refreshBedroom = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/robot/bedroom`, {
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error();
+        const data = (await response.json()) as {
+          bedroom?: {
+            available?: boolean;
+            world_x?: number;
+            world_y?: number;
+            world_z?: number;
+          } | null;
+        };
+        const value = data.bedroom;
+        if (!active) return;
+        if (
+          value?.available &&
+          value.world_x != null &&
+          value.world_y != null
+        ) {
+          const position = {
+            x: value.world_x,
+            y: value.world_y,
+            z: value.world_z ?? 0,
+          };
+          setBedroom(position);
+          sceneRef.current?.setBedroom(position);
+          setBedroomStatus(
+            `Bedroom · (${position.x.toFixed(2)}, ${position.y.toFixed(2)})`,
+          );
+        } else {
+          setBedroom(null);
+          sceneRef.current?.setBedroom(null);
+          setBedroomStatus(value ? "Bedroom 等待地图对齐" : "Bedroom 尚未标记");
+        }
+      } catch {
+        if (active) setBedroomStatus("Bedroom 服务离线");
+      }
+    };
+    refreshBedroom();
+    const timer = window.setInterval(refreshBedroom, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const saveBedroom = async (position: WorldPosition, atRobot = false) => {
+    try {
+      setBedroomStatus("正在更新 Bedroom…");
+      const response = await fetch(`${API_BASE}/api/robot/bedroom`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          atRobot
+            ? { at_robot: true }
+            : {
+                at_robot: false,
+                world_x: position.x,
+                world_y: position.y,
+                world_z: position.z,
+              },
+        ),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "机器人拒绝更新");
+      setBedroom(position);
+      sceneRef.current?.setBedroom(position);
+      setBedroomStatus(
+        `Bedroom 已更新 · (${position.x.toFixed(2)}, ${position.y.toFixed(2)})`,
+      );
+    } catch (error) {
+      setBedroomStatus(
+        `更新失败 · ${error instanceof Error ? error.message : "未知错误"}`,
+      );
+    } finally {
+      setSelectingBedroom(false);
+    }
+  };
+
+  const markAtRobot = () => {
+    const pose = sceneRef.current?.getRobotPose();
+    if (!pose) {
+      setBedroomStatus("尚未收到机器人位置");
+      return;
+    }
+    if (window.confirm("将 Bedroom 更新为机器人当前所在位置？")) {
+      void saveBedroom(pose, true);
+    }
+  };
+
+  const handleMapClick = (event: MouseEvent<HTMLCanvasElement>) => {
+    if (!selectingBedroom) return;
+    const position = sceneRef.current?.pickGround(event.clientX, event.clientY);
+    if (!position) {
+      setBedroomStatus("无法在该视角定位地面，请切换到俯视角再试");
+      return;
+    }
+    if (
+      window.confirm(
+        `将 Bedroom 更新为 (${position.x.toFixed(2)}, ${position.y.toFixed(2)})？旧位置会被替换。`,
+      )
+    ) {
+      void saveBedroom(position);
+    } else {
+      setSelectingBedroom(false);
+    }
+  };
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       setNow(Date.now());
       setFps(sceneRef.current?.getFps() ?? 0);
@@ -94,7 +220,11 @@ export function LidarViewer() {
 
   return (
     <div className="relative h-full w-full">
-      <canvas ref={canvasRef} className="block h-full w-full" />
+      <canvas
+        ref={canvasRef}
+        className={`block h-full w-full ${selectingBedroom ? "cursor-crosshair" : ""}`}
+        onClick={handleMapClick}
+      />
 
       <div className="pointer-events-none absolute inset-0 p-4 font-mono text-xs">
         <div className="flex items-start justify-between">
@@ -130,6 +260,24 @@ export function LidarViewer() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => setSelectingBedroom((value) => !value)}
+              className={`pointer-events-auto rounded-md border bg-black/40 px-3 py-1.5 backdrop-blur transition-colors ${
+                selectingBedroom
+                  ? "border-pink-400/70 text-pink-200"
+                  : "border-pink-500/25 text-pink-300/70 hover:border-pink-400/60"
+              }`}
+            >
+              {selectingBedroom ? "点击地图位置…" : "标记 BEDROOM"}
+            </button>
+            <button
+              type="button"
+              onClick={markAtRobot}
+              className="pointer-events-auto rounded-md border border-pink-500/25 bg-black/40 px-3 py-1.5 text-pink-300/70 backdrop-blur transition-colors hover:border-pink-400/60"
+            >
+              使用机器人位置
+            </button>
+            <button
+              type="button"
               onClick={() => setCamVisible((value) => !value)}
               className={`pointer-events-auto rounded-md border bg-black/40 px-3 py-1.5 backdrop-blur transition-colors ${
                 camVisible
@@ -161,9 +309,9 @@ export function LidarViewer() {
         </div>
 
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-cyan-500/15 bg-black/40 px-4 py-1.5 text-cyan-300/50 backdrop-blur">
-          {viewMode === "pov"
-            ? "first-person view from the robot"
-            : "drag to orbit · scroll to zoom · right-drag to pan"}
+          {selectingBedroom
+            ? "点击地图任意地面位置以更新唯一 Bedroom"
+            : `${bedroomStatus}${bedroom ? "" : " · 可在任意位置标记"}`}
         </div>
 
         {camVisible && (

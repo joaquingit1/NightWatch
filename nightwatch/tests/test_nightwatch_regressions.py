@@ -27,7 +27,12 @@ from nightwatch.blueprints import (
     scout,
 )
 from nightwatch.connection import GO2Connection
-from nightwatch.contracts import BehaviorKind, BehaviorLease, RobotActivity
+from nightwatch.contracts import (
+    BehaviorKind,
+    BehaviorLease,
+    MissionMode,
+    RobotActivity,
+)
 from nightwatch.curiosity import (
     CuriosityConfig,
     CuriositySupervisor,
@@ -860,6 +865,33 @@ def test_curiosity_accepts_sustained_no_frontiers_as_map_completion() -> None:
     assert curiosity._exploring is False
 
 
+def test_reopened_exploration_rearms_map_completion_prompt() -> None:
+    curiosity = object.__new__(CuriositySupervisor)
+    curiosity._last_exploration_status_at = 0.0
+    curiosity._map_phase = "MAPPED"
+    curiosity._exploring = False
+    curiosity._prior_session_mapped = False
+    curiosity._map_completion_prompt_suppressed = True
+    curiosity._map_completion_prompt_deadline = 123.0
+    curiosity._retry_not_before = 0.0
+    curiosity._explore = SimpleNamespace(
+        exploration_status=lambda: {
+            "active": False,
+            "map_complete": False,
+        }
+    )
+    curiosity._patrol = SimpleNamespace(
+        patrol_status=lambda: {"no_goal_for_s": 9.0, "saturation": 1.0}
+    )
+    curiosity._stop_patrol = lambda _reason: None
+
+    curiosity._refresh_map_phase(2.0)
+
+    assert curiosity._map_phase == "EXPLORING"
+    assert curiosity._map_completion_prompt_suppressed is False
+    assert curiosity._map_completion_prompt_deadline == 0.0
+
+
 def test_curiosity_does_not_restart_before_observing_map_completion() -> None:
     curiosity = object.__new__(CuriositySupervisor)
     curiosity.config = CuriosityConfig()
@@ -1455,7 +1487,7 @@ def test_gesture_break_interrupts_exploration_while_mapping() -> None:
     assert started
 
 
-def test_curious_follow_triggers_during_active_mapping() -> None:
+def test_exploration_mode_never_triggers_curious_follow() -> None:
     now = time.monotonic()
     curiosity = object.__new__(CuriositySupervisor)
     curiosity.config = CuriosityConfig()
@@ -1473,6 +1505,7 @@ def test_curious_follow_triggers_during_active_mapping() -> None:
     curiosity._last_costmap_at = now
     curiosity._last_exploration_status_at = now + 100.0
     curiosity._map_phase = "EXPLORING"
+    curiosity._mission_mode = MissionMode.EXPLORATION
     curiosity._exploring = True
     curiosity._patrolling = False
     curiosity._curious_follow_started = 0.0
@@ -1480,12 +1513,38 @@ def test_curious_follow_triggers_during_active_mapping() -> None:
     curiosity._is_following = lambda: False
     curiosity._person_is_close = lambda _now: True
     curiosity._interrupt_dog_expression = lambda _reason: None
+    curiosity._stop_face_observation = lambda _reason: None
+    curiosity._stop_patrol = lambda _reason: None
+    curiosity._ensure_exploring = lambda _now: None
+    curiosity._maybe_escape_stall = lambda _now: False
+    curiosity._set_activity = lambda *_args: None
     follows: list[bool] = []
     curiosity._start_curious_follow = lambda: follows.append(True)
 
     curiosity._tick()
 
-    assert follows == [True]
+    assert follows == []
+
+
+def test_patrol_scan_settings_persist_with_safe_bounds(tmp_path) -> None:
+    settings_path = tmp_path / "operator-settings.json"
+    curiosity = object.__new__(CuriositySupervisor)
+    curiosity.config = CuriosityConfig(
+        operator_settings_path=str(settings_path)
+    )
+    curiosity._lock = RLock()
+    curiosity._patrol_active_elapsed_s = 500.0
+
+    message = curiosity.set_patrol_scan_settings(999.0, 1.0)
+    saved = json.loads(settings_path.read_text(encoding="utf-8"))
+
+    assert "300s moving" in message
+    assert saved["patrol_interval_s"] == 300.0
+    assert saved["scan_duration_s"] == 10.0
+    assert curiosity._load_operator_settings() == {
+        "patrol_interval_s": 300.0,
+        "scan_duration_s": 10.0,
+    }
 
 
 def test_active_explorer_mcp_retry_does_not_rearm_firmware(monkeypatch) -> None:
@@ -1914,6 +1973,7 @@ def test_face_observation_frames_person_only_during_patrol_idle(monkeypatch) -> 
         face_observation_s=15.0,
     )
     curiosity._map_phase = "MAPPED"
+    curiosity._mission_mode = MissionMode.CRUISE
     curiosity._retry_not_before = 0.0
     curiosity._face_observation_until = 0.0
     curiosity._face_observation_last_poll = 0.0
@@ -3190,6 +3250,21 @@ def test_wave_protocol_does_one_final_wave_when_subject_looks() -> None:
     assert gaze_calls["n"] == 2
 
 
+def test_wave_protocol_stops_before_firmware_command_when_authority_is_revoked() -> None:
+    waves, attempts, looked = run_wave_protocol(
+        waver=lambda: pytest.fail("must not wave after manual takeover"),
+        rearm=lambda: pytest.fail("must not rearm after manual takeover"),
+        gaze_check=lambda: pytest.fail("must not inspect after manual takeover"),
+        renew_lease=lambda: False,
+        max_waves=4,
+        max_attempts=8,
+    )
+
+    assert waves == 0
+    assert attempts == 0
+    assert looked is False
+
+
 def _bare_intervention() -> InterventionSkill:
     skill_obj = object.__new__(InterventionSkill)
     skill_obj.config = SimpleNamespace(
@@ -3784,9 +3859,40 @@ def test_operator_sleep_area_action_and_button_are_wired() -> None:
         "tool": "escort_to_sleeping_area",
         "args": {},
     }
-    # The operator page renders the button that triggers it.
-    assert "act('sleep_area')" in _OPERATOR_HTML
-    assert "Take me to the sleeping area" in _OPERATOR_HTML
+    # The upgraded page exposes the unique Bedroom map and automatic flow.
+    assert "http://localhost:3000/lidar" in _OPERATOR_HTML
+    assert "接近最近的人" in _OPERATOR_HTML
+    assert "标记 BEDROOM" not in _OPERATOR_HTML  # belongs to the map page
+
+
+def test_unique_bedroom_overwrites_and_persists_map_coordinates() -> None:
+    model = object.__new__(NightwatchWorldModel)
+    model._lock = RLock()
+    model._db = sqlite3.connect(":memory:")
+    model._session_id = "session-a"
+    model._latest_odom = None
+    model._world_to_map_cache = None
+    model._world_to_map_cache_until = 0.0
+    model._world_to_map = lambda: (10.0, 20.0, math.pi / 2)
+    model._event = lambda *_args, **_kwargs: None
+    model._create_schema()
+
+    assert "Bedroom updated" in model.set_bedroom_at(1.0, 2.0, 0.0)
+    assert "Bedroom updated" in model.set_bedroom_at(3.0, 4.0, 0.0)
+
+    count = model._db.execute(
+        "SELECT COUNT(*) FROM operator_destinations"
+    ).fetchone()[0]
+    row = model._db.execute(
+        "SELECT map_x,map_y FROM operator_destinations WHERE name='bedroom'"
+    ).fetchone()
+    destination = model.bedroom_destination()
+
+    assert count == 1
+    assert row == pytest.approx((6.0, 23.0))
+    assert destination is not None
+    assert destination["x"] == pytest.approx(3.0)
+    assert destination["y"] == pytest.approx(4.0)
 
 
 # ---------------------------------------------------------------------------

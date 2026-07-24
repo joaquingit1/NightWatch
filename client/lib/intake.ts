@@ -13,11 +13,14 @@ export interface IntakeQuestion {
 
 export interface IntakeSchema {
   session_id: string;
+  interaction_id: string | null;
+  interaction_expires_ts: number | null;
   questions: IntakeQuestion[];
 }
 
 export interface IntakeSubmitPayload {
   session_id: string;
+  interaction_id?: string | null;
   consent_analysis: boolean;
   tiredness: "energized" | "tired";
   wants_escort: boolean;
@@ -27,6 +30,7 @@ export interface IntakeSubmitPayload {
 export interface IntakeResponse {
   response_id: string;
   session_id: string;
+  interaction_id: string | null;
   created_ts: number;
   consent_analysis: boolean;
   tiredness: "energized" | "tired";
@@ -35,6 +39,8 @@ export interface IntakeResponse {
   name_alias: string | null;
   source: string;
   routing_hint: "escort" | "observe" | "declined";
+  interaction_bound: boolean;
+  interaction_status: "bound" | "already_handled_or_expired" | "ordinary";
 }
 
 export async function fetchIntakeSchema(sessionId?: string): Promise<IntakeSchema> {
