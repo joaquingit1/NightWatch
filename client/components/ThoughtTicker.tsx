@@ -1,11 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { PolicyEvent } from "@/lib/types";
+import type { LedgerResponse, PolicyEvent } from "@/lib/types";
 
 const MAX_EVENTS = 40;
+const POLL_MS = 2000;
 const BACKOFF_INITIAL_MS = 1000;
 const BACKOFF_MAX_MS = 8000;
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+function ledgerEventToPolicy(event: LedgerResponse["events"][number]): PolicyEvent {
+  return {
+    ts: event.ts,
+    state: event.state,
+    target_person: event.person_id,
+    utterance: null,
+    detail: event.detail,
+  };
+}
 
 function parseDetail(detail: string): { zh: string; en: string } {
   const parts = detail.split("|").map((s) => s.trim());
@@ -47,15 +60,53 @@ export function ThoughtTicker() {
   const [reconnecting, setReconnecting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const backoffRef = useRef(BACKOFF_INITIAL_MS);
+  const seenTsRef = useRef<Set<number>>(new Set());
+
+  const mergeEvents = (incoming: PolicyEvent[]) => {
+    if (!incoming.length) return;
+    setEvents((prev) => {
+      const merged = [...prev];
+      for (const event of incoming) {
+        if (seenTsRef.current.has(event.ts)) continue;
+        seenTsRef.current.add(event.ts);
+        merged.push(event);
+      }
+      return merged.slice(-MAX_EVENTS);
+    });
+  };
 
   useEffect(() => {
     let source: EventSource | null = null;
     let reconnectTimer: number | null = null;
+    let pollTimer: number | null = null;
     let cancelled = false;
+
+    const bootstrap = async () => {
+      try {
+        const res = await fetch("/api/ledger", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as LedgerResponse;
+        mergeEvents(data.events.map(ledgerEventToPolicy));
+      } catch {
+        // polling fallback will retry
+      }
+    };
+
+    const pollLedger = async () => {
+      try {
+        const res = await fetch("/api/ledger", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as LedgerResponse;
+        mergeEvents(data.events.slice(-MAX_EVENTS).map(ledgerEventToPolicy));
+      } catch {
+        // silent retry
+      }
+    };
 
     const connect = () => {
       if (cancelled) return;
-      source = new EventSource("/text_stream/thoughts");
+      // Next.js rewrites buffer SSE; connect directly to FastAPI instead.
+      source = new EventSource(`${API_BASE}/text_stream/thoughts`);
 
       source.onopen = () => {
         backoffRef.current = BACKOFF_INITIAL_MS;
@@ -65,7 +116,7 @@ export function ThoughtTicker() {
       source.onmessage = (msg) => {
         try {
           const event = JSON.parse(msg.data) as PolicyEvent;
-          setEvents((prev) => [...prev.slice(-(MAX_EVENTS - 1)), event]);
+          mergeEvents([event]);
         } catch {
           // ignore malformed events
         }
@@ -80,12 +131,15 @@ export function ThoughtTicker() {
       };
     };
 
+    bootstrap();
     connect();
+    pollTimer = window.setInterval(pollLedger, POLL_MS);
 
     return () => {
       cancelled = true;
       source?.close();
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (pollTimer) window.clearInterval(pollTimer);
     };
   }, []);
 
@@ -96,15 +150,20 @@ export function ThoughtTicker() {
   }, [events]);
 
   return (
-    <section 
+    <section
       className="flex min-h-0 flex-1 flex-col rounded-xl glass-panel p-4 animate-slide-up"
-      style={{ animationDelay: '100ms' }}
+      style={{ animationDelay: "100ms" }}
     >
-      <h2 className="mb-2 text-xs font-bold text-booth-muted/80 flex items-center justify-between">
+      <h2 className="mb-1 text-xs font-bold text-booth-muted/80 flex items-center justify-between">
         <span>思考流 Thought Ticker</span>
-        {reconnecting && <span className="text-[10px] text-booth-warn animate-pulse">Reconnecting...</span>}
+        {reconnecting && (
+          <span className="text-[10px] text-booth-warn animate-pulse">Reconnecting...</span>
+        )}
       </h2>
-      <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto pr-2 text-sm mt-2">
+      <p className="mb-2 text-[10px] text-booth-muted leading-snug">
+        守夜犬当前在做什么 · Live care-loop status (patrol, triage, escort…)
+      </p>
+      <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto pr-2 text-sm mt-1">
         {events.length === 0 && !reconnecting && (
           <p className="text-booth-muted">等待系统事件... Waiting for events...</p>
         )}
@@ -112,8 +171,13 @@ export function ThoughtTicker() {
           const { zh, en } = parseDetail(event.detail);
           const color = getStateColor(event.state);
           return (
-            <div key={`${event.ts}-${i}`} className={`border-l-2 pl-3 animate-slide-up transition-all py-1 -ml-1 rounded-r-md ${color.border} ${color.bgHover}`}>
-              <div className={`text-[10px] font-bold mb-0.5 ${color.text}`}>{formatState(event.state)}</div>
+            <div
+              key={`${event.ts}-${i}`}
+              className={`border-l-2 pl-3 animate-slide-up transition-all py-1 -ml-1 rounded-r-md ${color.border} ${color.bgHover}`}
+            >
+              <div className={`text-[10px] font-bold mb-0.5 ${color.text}`}>
+                {formatState(event.state)}
+              </div>
               <div className="text-[15px] font-medium leading-snug text-booth-text/90">{zh}</div>
               {en && <div className="text-xs text-booth-muted mt-0.5 font-light">{en}</div>}
             </div>

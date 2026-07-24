@@ -128,6 +128,18 @@ The booth stack is three independently run pieces:
 
 ### Run locally (Windows PowerShell)
 
+Terminal 0 — Insta360 bridge (port 5556), optional when using `CAMERA_SOURCE=insta360`:
+
+```powershell
+# Requires the proprietary SDK in the git-ignored folder (not redistributable).
+$env:INSTA360_SDK_ROOT = "C:\Users\ASUS\Documents\Computer Science\NightWatch\Windows_CameraSDK-2.1.1_MediaSDK-3.1.3"
+cd insta360_bridge
+.\build.ps1
+.\build\Release\insta360_bridge.exe --port 5556
+```
+
+Set `CAMERA_SOURCE=insta360` in `server/.env.local`. For robot POV, point `ROBOT_CAMERA_URL` at the bridge on the robot laptop. See [`insta360_bridge/README.md`](insta360_bridge/README.md).
+
 Terminal 1 — fatigue detection service (port 8001), only needed for `SCORER_BACKEND=live`:
 
 ```powershell
@@ -162,6 +174,8 @@ pnpm dev
 
 Open `http://localhost:3000`. Next.js rewrites `/api/*`, `/video_feed/*`, and `/text_stream/*` to the FastAPI server.
 
+Public nap intake (QR flow): open `http://localhost:3000/form`. Answers persist in SQLite (`data/nightwatch.db` by default). The booth page polls pending escort requests in the **Intake queue** panel.
+
 ### Verify everything
 
 ```powershell
@@ -184,8 +198,13 @@ Invoke-WebRequest http://localhost:3000 -UseBasicParsing
 | `/api/adopt` | POST | Adoption form |
 | `/api/capture` | POST | Capture session upload |
 | `/api/outcome` | POST | Post-wake survey |
+| `/api/form/schema` | GET | Intake questionnaire + `session_id` |
+| `/api/form/responses` | POST | Submit nap intake (public, no auth) |
+| `/api/form/responses/latest` | GET | Latest intake rows for booth |
+| `/api/form/responses/pending-escort` | GET | Visitors waiting for robot escort |
+| `/api/form/responses/{id}` | PATCH | Mark acknowledged / escorted / declined |
 
-Stub implementations ship by default (`DEMO_MODE=stub`). Swap services in `server/app/services/` when perception, policy, and robot modules are ready.
+Stub implementations remain available for offline development (`SCORER_BACKEND=stub`). Live mode is the default and requires the fatigue detection service on port 8001.
 
 ---
 

@@ -1,6 +1,8 @@
 # Night Watch monorepo (client/, server/, fatigue_fastapi_service/)
 
 /bin/
+/Windows_CameraSDK-2.1.1_MediaSDK-3.1.3/
+.vscode/
 
 # Python
 __pycache__/
@@ -32,6 +34,9 @@ out/
 *.db
 data/
 verify-output.txt
+
+# Insta360 bridge build artifacts
+insta360_bridge/build/
 
 # OS
 .DS_Store

@@ -1,3 +1,4 @@
+import { IntakeQueue } from "@/components/IntakeQueue";
 import { LedgerPanel } from "@/components/LedgerPanel";
 import { PlanStrip } from "@/components/PlanStrip";
 import { ScoreCard } from "@/components/ScoreCard";
@@ -35,6 +36,7 @@ export default function BoothPage() {
           <ScoreCard />
           <ThoughtTicker />
           <PlanStrip />
+          <IntakeQueue />
           <LedgerPanel />
         </div>
       </div>
