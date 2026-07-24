@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import load_settings
+from app.routers import api, thoughts, video
+from app.services.frame_source import create_frame_source
+from app.services.ledger_memory import LedgerMemory
+from app.services.live_scorer import LiveScoreSource
+from app.services.policy_events import StubPolicyEventSource
+from app.services.scorer import StubScoreSource
+
+
+async def _stub_loop(app: FastAPI) -> None:
+    settings = app.state.settings
+    interval = 1.0 / settings.tick_hz
+    last_event_count = 0
+    while True:
+        app.state.score_source.tick()
+        app.state.policy_source.tick()
+        events = app.state.policy_source.subscribe()
+        if len(events) > last_event_count:
+            for event in list(events)[last_event_count:]:
+                app.state.ledger.record_event(event)
+            last_event_count = len(events)
+        await asyncio.sleep(interval)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = load_settings()
+    app.state.settings = settings
+
+    if settings.scorer_backend == "live":
+        # frame_source is created right after this, so the lambda's lookup
+        # of app.state.frame_source only resolves once streaming actually starts.
+        app.state.score_source = LiveScoreSource(
+            ws_url=settings.fatigue_ws_url,
+            get_frame=lambda: app.state.frame_source.get_pov_frame()
+            if hasattr(app.state, "frame_source")
+            else None,
+        )
+    else:
+        app.state.score_source = StubScoreSource()
+
+    app.state.frame_source = create_frame_source(
+        settings.camera_source,
+        score_provider=app.state.score_source.latest,
+    )
+    app.state.policy_source = StubPolicyEventSource()
+    app.state.ledger = LedgerMemory()
+
+    if isinstance(app.state.score_source, LiveScoreSource):
+        await app.state.score_source.start()
+
+    task = asyncio.create_task(_stub_loop(app))
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        if isinstance(app.state.score_source, LiveScoreSource):
+            await app.state.score_source.stop()
+        app.state.frame_source.close()
+
+
+def create_app() -> FastAPI:
+    settings = load_settings()
+    app = FastAPI(title="Night Watch API", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(video.router)
+    app.include_router(thoughts.router)
+    app.include_router(api.router)
+    return app
+
+
+app = create_app()

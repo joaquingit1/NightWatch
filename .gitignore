@@ -1,1 +1,38 @@
+# Night Watch monorepo (client/, server/, fatigue_fastapi_service/)
+
 /bin/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Environment & secrets (keep *.example tracked)
+.env
+.env.local
+.env.*.local
+
+# Local runtime data
+*.db
+data/
+verify-output.txt
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,5 @@
+mediapipe==0.10.35
+ultralytics==8.4.104
+fastapi>=0.116,<1
+uvicorn[standard]>=0.35,<1
+websockets>=15,<17
