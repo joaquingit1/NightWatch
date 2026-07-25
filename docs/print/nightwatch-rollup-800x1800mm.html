@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>守夜犬 Night Watch — 800 × 1800 mm 易拉宝</title>
+    <style>
+      @font-face {
+        font-family: "NightWatch Sans";
+        src: url("file:///System/Library/Fonts/Supplemental/Arial%20Unicode.ttf") format("truetype");
+        font-style: normal;
+        font-weight: 100 900;
+      }
+
+      @font-face {
+        font-family: "NightWatch Condensed";
+        src: url("file:///System/Library/Fonts/Supplemental/Arial%20Narrow%20Bold.ttf") format("truetype");
+        font-style: normal;
+        font-weight: 700 900;
+      }
+
+      :root {
+        --paper: #f2eee4;
+        --ink: #081a3a;
+        --blue: #2454f5;
+        --orange: #f0502f;
+        --lavender: #b8afff;
+        --muted: #5b6478;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      @page {
+        size: 800mm 1800mm;
+        margin: 0;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 800mm;
+        height: 1800mm;
+        overflow: hidden;
+        background: var(--paper);
+      }
+
+      body {
+        color: var(--ink);
+        font-family: "NightWatch Sans", Arial, sans-serif;
+      }
+
+      .poster {
+        position: relative;
+        width: 800mm;
+        height: 1800mm;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 76% 9%, rgba(184, 175, 255, 0.35), transparent 15%),
+          linear-gradient(112deg, rgba(255, 255, 255, 0.72), rgba(242, 238, 228, 0.52)),
+          var(--paper);
+      }
+
+      .paper-noise {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.24;
+        background-image:
+          repeating-linear-gradient(
+            14deg,
+            rgba(8, 26, 58, 0.035) 0,
+            rgba(8, 26, 58, 0.035) 0.4mm,
+            transparent 0.4mm,
+            transparent 5mm
+          );
+        mix-blend-mode: multiply;
+      }
+
+      .top-accent {
+        position: absolute;
+        inset: 0 0 auto;
+        height: 22mm;
+        background: var(--orange);
+        clip-path: polygon(0 0, 100% 0, 100% 52%, 82% 86%, 63% 48%, 44% 88%, 22% 55%, 0 94%);
+      }
+
+      .header {
+        position: relative;
+        z-index: 3;
+        height: 322mm;
+        padding: 52mm 54mm 26mm;
+      }
+
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 10mm;
+        margin-bottom: 10mm;
+        color: var(--blue);
+        font-size: 8mm;
+        font-weight: 800;
+        letter-spacing: 1.2mm;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 28mm;
+        height: 2.4mm;
+        background: var(--blue);
+      }
+
+      h1 {
+        margin: 0;
+        color: var(--ink);
+        font-size: 59mm;
+        font-weight: 900;
+        letter-spacing: -4mm;
+        line-height: 0.95;
+      }
+
+      .brand-en {
+        margin-top: 5mm;
+        font-family: "NightWatch Condensed", "Arial Narrow", Arial, sans-serif;
+        font-size: 24mm;
+        font-weight: 900;
+        letter-spacing: 5.6mm;
+        line-height: 1;
+      }
+
+      .manifesto {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: end;
+        gap: 24mm;
+        margin-top: 20mm;
+      }
+
+      .manifesto-cn {
+        font-size: 13mm;
+        font-weight: 850;
+        line-height: 1.34;
+      }
+
+      .manifesto-en {
+        margin-top: 4mm;
+        max-width: 510mm;
+        font-size: 8.5mm;
+        font-weight: 700;
+        line-height: 1.35;
+      }
+
+      .stop {
+        color: var(--orange);
+      }
+
+      .edition {
+        min-width: 122mm;
+        padding: 9mm 12mm;
+        color: var(--paper);
+        background: var(--ink);
+        font-size: 6.8mm;
+        font-weight: 800;
+        line-height: 1.45;
+        text-align: center;
+        transform: rotate(-2deg);
+      }
+
+      .hero {
+        position: relative;
+        z-index: 1;
+        height: 520mm;
+        overflow: hidden;
+        background: var(--ink);
+        clip-path: polygon(0 2%, 18% 0, 38% 3%, 62% 0, 82% 2%, 100% 0, 100% 96%, 82% 100%, 60% 97%, 36% 100%, 17% 96%, 0 99%);
+      }
+
+      .hero > img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center 54%;
+        filter: saturate(0.98) contrast(1.02);
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, rgba(8, 26, 58, 0.7), transparent 42%),
+          linear-gradient(0deg, rgba(8, 26, 58, 0.46), transparent 24%);
+        pointer-events: none;
+      }
+
+      .hero-copy {
+        position: absolute;
+        z-index: 2;
+        left: 48mm;
+        top: 70mm;
+        width: 300mm;
+        padding-left: 18mm;
+        color: white;
+        border-left: 4mm solid var(--orange);
+      }
+
+      .hero-copy h2 {
+        margin: 0 0 10mm;
+        font-size: 19mm;
+        font-weight: 900;
+        line-height: 1.18;
+      }
+
+      .hero-copy p {
+        margin: 0;
+        font-size: 8mm;
+        font-weight: 650;
+        line-height: 1.48;
+      }
+
+      .hero-pills {
+        position: absolute;
+        z-index: 2;
+        left: 48mm;
+        bottom: 48mm;
+        display: flex;
+        gap: 8mm;
+      }
+
+      .pill {
+        padding: 7mm 10mm;
+        color: var(--ink);
+        background: rgba(242, 238, 228, 0.94);
+        border: 1.6mm solid var(--blue);
+        font-size: 6.5mm;
+        font-weight: 850;
+        line-height: 1.25;
+      }
+
+      .content {
+        position: relative;
+        z-index: 4;
+        padding: 22mm 44mm 0;
+      }
+
+      .section-kicker {
+        margin-bottom: 5mm;
+        color: var(--blue);
+        font-size: 6.7mm;
+        font-weight: 900;
+        letter-spacing: 1.1mm;
+        text-transform: uppercase;
+      }
+
+      .section-title {
+        margin: 0;
+        font-size: 16mm;
+        font-weight: 900;
+        line-height: 1.18;
+      }
+
+      .section-title small {
+        display: block;
+        margin-top: 3mm;
+        font-size: 7.2mm;
+        font-weight: 750;
+        letter-spacing: 0.25mm;
+      }
+
+      .care {
+        height: 314mm;
+      }
+
+      .care-grid {
+        display: grid;
+        grid-template-columns: 1.12fr 0.88fr;
+        gap: 16mm;
+        margin-top: 14mm;
+      }
+
+      .care-visual {
+        height: 188mm;
+        overflow: hidden;
+        border: 2mm solid var(--ink);
+        box-shadow: 8mm 8mm 0 var(--lavender);
+      }
+
+      .care-visual img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8mm;
+      }
+
+      .step {
+        min-height: 84mm;
+        padding: 10mm;
+        background: white;
+        border-top: 3mm solid var(--orange);
+      }
+
+      .step-number {
+        color: var(--blue);
+        font-family: "NightWatch Condensed", "Arial Narrow", Arial, sans-serif;
+        font-size: 9mm;
+        font-weight: 900;
+      }
+
+      .step strong {
+        display: block;
+        margin: 2mm 0 3mm;
+        font-size: 7.3mm;
+        line-height: 1.3;
+      }
+
+      .step span {
+        display: block;
+        color: var(--muted);
+        font-size: 5.4mm;
+        font-weight: 650;
+        line-height: 1.34;
+      }
+
+      .scenarios {
+        height: 272mm;
+        margin: 0 -44mm;
+        padding: 24mm 44mm;
+        color: white;
+        background: var(--ink);
+        display: grid;
+        grid-template-columns: 1.24fr 0.76fr;
+        gap: 22mm;
+        align-items: center;
+      }
+
+      .scenario-visual {
+        height: 205mm;
+        overflow: hidden;
+        border: 2mm solid var(--paper);
+        box-shadow: -8mm 8mm 0 var(--orange);
+      }
+
+      .scenario-visual img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .scenario-copy .section-kicker {
+        color: var(--lavender);
+      }
+
+      .scenario-copy .section-title {
+        font-size: 14mm;
+      }
+
+      .scenario-list {
+        margin-top: 14mm;
+        display: grid;
+        gap: 10mm;
+      }
+
+      .scenario-item {
+        padding-left: 10mm;
+        border-left: 2.5mm solid var(--orange);
+      }
+
+      .scenario-item strong {
+        display: block;
+        font-size: 7.2mm;
+        line-height: 1.25;
+      }
+
+      .scenario-item span {
+        display: block;
+        margin-top: 2mm;
+        color: #c8d4eb;
+        font-size: 5.5mm;
+        font-weight: 650;
+      }
+
+      .details {
+        height: 286mm;
+        padding-top: 24mm;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18mm;
+      }
+
+      .detail-card {
+        padding: 18mm;
+        background: rgba(255, 255, 255, 0.88);
+        border: 1.5mm solid var(--ink);
+      }
+
+      .detail-card.orange {
+        border-color: var(--orange);
+      }
+
+      .detail-card h3 {
+        margin: 0 0 4mm;
+        font-size: 12mm;
+        font-weight: 900;
+      }
+
+      .detail-card .en-title {
+        margin-bottom: 11mm;
+        color: var(--blue);
+        font-size: 6.4mm;
+        font-weight: 900;
+        letter-spacing: 0.7mm;
+      }
+
+      .detail-card ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 7mm;
+      }
+
+      .detail-card li {
+        position: relative;
+        padding-left: 12mm;
+        font-size: 6.2mm;
+        font-weight: 750;
+        line-height: 1.32;
+      }
+
+      .detail-card li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 2.8mm;
+        width: 5mm;
+        height: 5mm;
+        background: var(--blue);
+        transform: rotate(45deg);
+      }
+
+      .detail-card.orange li::before {
+        background: var(--orange);
+        border-radius: 50%;
+      }
+
+      .detail-card li span {
+        display: block;
+        margin-top: 1.3mm;
+        color: var(--muted);
+        font-size: 4.9mm;
+        font-weight: 650;
+      }
+
+      .footer {
+        position: relative;
+        height: 86mm;
+        margin: 0 -44mm;
+        padding: 18mm 44mm 12mm;
+        color: white;
+        background: var(--orange);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .footer strong {
+        display: block;
+        font-size: 9mm;
+        line-height: 1.25;
+      }
+
+      .footer span {
+        display: block;
+        margin-top: 2mm;
+        font-size: 5.3mm;
+        font-weight: 700;
+      }
+
+      .footer-mark {
+        padding: 7mm 10mm;
+        background: var(--ink);
+        font-family: "NightWatch Condensed", "Arial Narrow", Arial, sans-serif;
+        font-size: 6.5mm;
+        font-weight: 900;
+        letter-spacing: 1mm;
+      }
+
+      .crosshair {
+        position: absolute;
+        z-index: 5;
+        width: 34mm;
+        height: 34mm;
+        border: 2mm solid var(--blue);
+        border-radius: 50%;
+      }
+
+      .crosshair::before,
+      .crosshair::after {
+        content: "";
+        position: absolute;
+        background: var(--blue);
+      }
+
+      .crosshair::before {
+        left: 50%;
+        top: -13mm;
+        width: 1.6mm;
+        height: 60mm;
+        transform: translateX(-50%);
+      }
+
+      .crosshair::after {
+        left: -13mm;
+        top: 50%;
+        width: 60mm;
+        height: 1.6mm;
+        transform: translateY(-50%);
+      }
+
+      .crosshair.one {
+        right: 62mm;
+        top: 65mm;
+      }
+
+      .crosshair.two {
+        right: 70mm;
+        top: 805mm;
+        transform: scale(0.7);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="poster">
+      <div class="top-accent"></div>
+      <div class="crosshair one"></div>
+      <div class="crosshair two"></div>
+
+      <header class="header">
+        <div class="eyebrow">CARE-FIRST AUTONOMY · 关怀优先的自主系统</div>
+        <h1>守夜犬</h1>
+        <div class="brand-en">NIGHT WATCH</div>
+        <div class="manifesto">
+          <div>
+            <div class="manifesto-cn">
+              每个 AI 都想让你更努力。<span class="stop">它想让你停下来。</span>
+            </div>
+            <div class="manifesto-en">
+              Every AI makes you work more. <span class="stop">This one makes you stop.</span>
+            </div>
+          </div>
+          <div class="edition">产品原型<br />PRODUCT PROTOTYPE</div>
+        </div>
+      </header>
+
+      <section class="hero">
+        <img src="../images/nightwatch-rollup-hero.png" alt="" />
+        <div class="hero-copy">
+          <h2>一只会看见疲惫、尊重选择、陪你去休息的机器狗</h2>
+          <p>
+            A robot dog that notices fatigue, respects your choice, and walks with you toward rest.
+            It turns sensing into a gentle invitation—not a judgment.
+          </p>
+        </div>
+        <div class="hero-pills">
+          <div class="pill">发现疲劳<br />NOTICE</div>
+          <div class="pill">征得同意<br />CONSENT</div>
+          <div class="pill">安全陪伴<br />ESCORT</div>
+          <div class="pill">人工接管<br />OVERRIDE</div>
+        </div>
+      </section>
+
+      <div class="content">
+        <section class="care">
+          <div class="section-kicker">01 · From detection to care</div>
+          <h2 class="section-title">
+            从“检测”到“关怀”
+            <small>A humane journey from noticing fatigue to keeping watch</small>
+          </h2>
+          <div class="care-grid">
+            <div class="care-visual">
+              <img src="../images/care-journey.png" alt="" />
+            </div>
+            <div class="steps">
+              <div class="step">
+                <div class="step-number">01</div>
+                <strong>发现疲劳 / Notice</strong>
+                <span>观察持续趋势，不用一帧定义一个人。<br />Read patterns over time, never a person from one frame.</span>
+              </div>
+              <div class="step">
+                <div class="step-number">02</div>
+                <strong>温柔邀请 / Ask</strong>
+                <span>用非医疗化语言表达关切。<br />Offer a gentle, non-clinical invitation.</span>
+              </div>
+              <div class="step">
+                <div class="step-number">03</div>
+                <strong>征得同意 / Consent</strong>
+                <span>是否接受引导，始终由你决定。<br />You always decide whether to continue.</span>
+              </div>
+              <div class="step">
+                <div class="step-number">04</div>
+                <strong>陪伴守护 / Escort & watch</strong>
+                <span>前往确认过的休息区，现场人员始终可接管。<br />Guide safely, with people always in control.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="scenarios">
+          <div class="scenario-visual">
+            <img src="../images/application-scenarios.png" alt="" />
+          </div>
+          <div class="scenario-copy">
+            <div class="section-kicker">02 · Where it belongs</div>
+            <h2 class="section-title">
+              每一个不该被透支的夜晚
+              <small>For every night that should not consume us</small>
+            </h2>
+            <div class="scenario-list">
+              <div class="scenario-item">
+                <strong>黑客松 / Hackathons</strong>
+                <span>高强度协作中的低压力休息入口</span>
+              </div>
+              <div class="scenario-item">
+                <strong>深夜办公室 / Late-night offices</strong>
+                <span>关怀来自环境，而不是绩效评判</span>
+              </div>
+              <div class="scenario-item">
+                <strong>高校期末周 / Finals week</strong>
+                <span>让休息成为清晰而容易的选择</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="details">
+          <article class="detail-card">
+            <h3>现在能做</h3>
+            <div class="en-title">WHAT IT CAN DO</div>
+            <ul>
+              <li>持续疲劳风险评估<span>Ongoing fatigue-risk assessment</span></li>
+              <li>双语休息登记<span>Bilingual rest intake</span></li>
+              <li>空间地图与休息区标记<span>Spatial map and rest-zone marking</span></li>
+              <li>安全护送与人工接管<span>Safe escort and human override</span></li>
+              <li>可见的唤醒检查倒计时<span>Visible wake-up check countdown</span></li>
+            </ul>
+          </article>
+
+          <article class="detail-card orange">
+            <h3>我们的边界</h3>
+            <div class="en-title">OUR BOUNDARIES</div>
+            <ul>
+              <li>同意先于行动<span>Consent before action</span></li>
+              <li>提醒不是诊断<span>Invitation, not diagnosis</span></li>
+              <li>关怀不是绩效考核<span>Care, never performance scoring</span></li>
+              <li>不确定时停下，而不是冒险<span>Stop under uncertainty—never improvise risk</span></li>
+              <li>现场人员承担最终责任<span>Humans remain accountable</span></li>
+            </ul>
+          </article>
+        </section>
+
+        <footer class="footer">
+          <div>
+            <strong>让技术学会体谅人的极限。</strong>
+            <span>Technology should learn to respect human limits.</span>
+          </div>
+          <div class="footer-mark">NIGHT WATCH · 守夜犬</div>
+        </footer>
+      </div>
+
+      <div class="paper-noise"></div>
+    </main>
+  </body>
+</html>

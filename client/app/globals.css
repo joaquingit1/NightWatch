@@ -41,6 +41,10 @@ body {
   overflow: hidden;
 }
 
+body:has(.landing-page) {
+  overflow-y: auto;
+}
+
 button,
 a {
   -webkit-tap-highlight-color: transparent;
