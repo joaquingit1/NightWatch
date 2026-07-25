@@ -306,6 +306,9 @@ _OPERATOR_HTML = """<!doctype html>
 _OPERATOR_HTML = Path(__file__).with_name("operator_console.html").read_text(
     encoding="utf-8"
 )
+_OPERATOR_GUIDE_HTML = Path(__file__).with_name("operator_guide.html").read_text(
+    encoding="utf-8"
+)
 
 
 class LatestFrameRobotWebInterface(RobotWebInterface):
@@ -356,6 +359,10 @@ class LatestFrameRobotWebInterface(RobotWebInterface):
             return HTMLResponse(
                 _OPERATOR_HTML.replace("__NIGHTWATCH_FORM_URL__", form_url)
             )
+
+        @self.app.get("/operator/help", response_class=HTMLResponse)
+        async def operator_guide() -> HTMLResponse:
+            return HTMLResponse(_OPERATOR_GUIDE_HTML)
 
         @self.app.post("/operator/action")
         async def operator_command(request: Request) -> JSONResponse:

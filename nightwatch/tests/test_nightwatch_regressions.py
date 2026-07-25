@@ -69,6 +69,7 @@ from nightwatch.tracker import (
 )
 from nightwatch.webchat import (
     _OPERATOR_ACTIONS,
+    _OPERATOR_GUIDE_HTML,
     _OPERATOR_HTML,
     LatestFrameRobotWebInterface,
     NightwatchWebInput,
@@ -3863,6 +3864,30 @@ def test_operator_sleep_area_action_and_button_are_wired() -> None:
     assert "http://localhost:3000/lidar" in _OPERATOR_HTML
     assert "接近最近的人" in _OPERATOR_HTML
     assert "标记 BEDROOM" not in _OPERATOR_HTML  # belongs to the map page
+
+
+def test_operator_console_and_guide_offer_shared_bilingual_controls() -> None:
+    assert 'id="languageZh"' in _OPERATOR_HTML
+    assert 'id="languageEn"' in _OPERATOR_HTML
+    assert 'href="/operator/help"' in _OPERATOR_HTML
+    assert "nightwatch.operator.language" in _OPERATOR_HTML
+    assert "data-i18n" in _OPERATOR_HTML
+
+    assert 'id="languageZh"' in _OPERATOR_GUIDE_HTML
+    assert 'id="languageEn"' in _OPERATOR_GUIDE_HTML
+    assert 'href="/operator"' in _OPERATOR_GUIDE_HTML
+    assert "nightwatch.operator.language" in _OPERATOR_GUIDE_HTML
+    assert "Keyboard shortcuts" in _OPERATOR_GUIDE_HTML
+    assert "安全优先" in _OPERATOR_GUIDE_HTML
+
+
+def test_operator_guide_route_is_available_without_robot_actions() -> None:
+    client = TestClient(_assessment_web_interface().app)
+    response = client.get("/operator/help")
+
+    assert response.status_code == 200
+    assert 'id="languageZh"' in response.text
+    assert 'href="/operator"' in response.text
 
 
 def test_unique_bedroom_overwrites_and_persists_map_coordinates() -> None:

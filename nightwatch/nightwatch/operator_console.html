@@ -113,6 +113,37 @@
       font-weight: 900;
       text-transform: uppercase;
     }
+    .header-controls {
+      position: relative;
+      z-index: 3;
+      display: grid;
+      justify-items: end;
+      gap: 10px;
+      align-self: stretch;
+    }
+    .language-switch { display: flex; gap: 6px; }
+    .language-switch button {
+      min-height: 34px;
+      padding: 5px 9px;
+      background: var(--paper);
+      font-family: "Courier New", monospace;
+      font-size: .7rem;
+    }
+    .language-switch button.active { background: var(--orange); color: var(--ink); }
+    .help-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      padding: 7px 11px;
+      color: var(--ink);
+      background: var(--acid);
+      border: 3px solid var(--ink);
+      box-shadow: 4px 4px 0 var(--ink);
+      font: 900 .72rem "Arial Black", Arial, sans-serif;
+      text-decoration: none;
+      text-transform: uppercase;
+    }
+    .help-link:hover { background: var(--orange); transform: translate(-1px, -1px); }
     .layout { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(390px, .58fr); gap: 20px; }
     .stack { display: grid; gap: 18px; align-content: start; }
     .panel {
@@ -298,7 +329,9 @@
       header { min-height: 130px; padding: 14px; box-shadow: 5px 5px 0 var(--ink); }
       h1 { font-size: 3.5rem; }
       header::after { font-size: 1.35rem; }
-      .live { max-width: 45%; }
+      .header-controls { justify-items: end; max-width: 48%; }
+      .live { max-width: 100%; }
+      .help-link { font-size: .64rem; }
       .actions { grid-template-columns: repeat(2, 1fr); }
       .metrics { grid-template-columns: repeat(2, 1fr); }
       .metric:nth-child(3n) { border-right: 2px solid var(--ink); }
@@ -312,123 +345,130 @@
 <main>
   <header>
     <div>
-      <p class="header-index">OPERATOR SYSTEM / UNIT 01 / 夜间行动终端</p>
-      <h1>守夜犬</h1>
-      <p class="hint">NIGHT WATCH / OPERATOR CONSOLE</p>
+      <p class="header-index" data-i18n="header.index">OPERATOR SYSTEM / UNIT 01 / 夜间行动终端</p>
+      <h1 data-i18n="header.brand">守夜犬</h1>
+      <p class="hint" data-i18n="header.subtitle">NIGHT WATCH / OPERATOR CONSOLE</p>
     </div>
-    <span class="live" id="linkState">● 正在连接机器人</span>
+    <div class="header-controls">
+      <div class="language-switch" role="group" aria-label="语言" data-i18n-aria-label="language.label">
+        <button id="languageZh" type="button" onclick="setLanguage('zh')" aria-pressed="true">中文</button>
+        <button id="languageEn" type="button" onclick="setLanguage('en')" aria-pressed="false">EN</button>
+      </div>
+      <span class="live" id="linkState">● 正在连接机器人</span>
+      <a class="help-link" href="/operator/help" data-i18n="header.help">工作台使用说明 →</a>
+    </div>
   </header>
   <div class="layout">
     <div class="stack">
       <section class="panel">
         <div class="video-head">
-          <h2>机器人视野 / FATIGUE INDEX</h2>
+          <h2 data-i18n="video.heading">机器人视野 / 疲劳指数</h2>
           <div class="row">
-            <button id="analysisMode" class="active" onclick="setVideoMode('analysis')">分析</button>
-            <button id="rawMode" onclick="setVideoMode('raw')">原始</button>
+            <button id="analysisMode" class="active" onclick="setVideoMode('analysis')" data-i18n="video.analysis">分析</button>
+            <button id="rawMode" onclick="setVideoMode('raw')" data-i18n="video.raw">原始</button>
           </div>
         </div>
         <div class="video-wrap">
-          <img id="robotVideo" alt="机器人相机视频">
+          <img id="robotVideo" alt="机器人相机视频" data-i18n-alt="video.alt">
           <div id="videoOverlay" class="overlay"></div>
         </div>
         <div class="metrics">
-          <div class="metric"><span>任务模式</span><b id="mission">—</b></div>
-          <div class="metric"><span>控制模式</span><b id="control">—</b></div>
-          <div class="metric"><span>当前行为</span><b id="behavior">—</b></div>
-          <div class="metric"><span>运动所有者</span><b id="owner">—</b></div>
-          <div class="metric"><span>疲劳检测</span><b id="fatigue">—</b></div>
-          <div class="metric"><span>交互阶段</span><b id="interaction">—</b></div>
-          <div class="metric"><span>电量</span><b id="battery">—</b></div>
-          <div class="metric"><span>导航</span><b id="navigation">—</b></div>
-          <div class="metric"><span>地图</span><b id="mapPhase">—</b></div>
-          <div class="metric"><span>相机延迟</span><b id="cameraAge">—</b></div>
+          <div class="metric"><span data-i18n="metric.mission">任务模式</span><b id="mission">—</b></div>
+          <div class="metric"><span data-i18n="metric.control">控制模式</span><b id="control">—</b></div>
+          <div class="metric"><span data-i18n="metric.behavior">当前行为</span><b id="behavior">—</b></div>
+          <div class="metric"><span data-i18n="metric.owner">运动所有者</span><b id="owner">—</b></div>
+          <div class="metric"><span data-i18n="metric.fatigue">疲劳检测</span><b id="fatigue">—</b></div>
+          <div class="metric"><span data-i18n="metric.interaction">交互阶段</span><b id="interaction">—</b></div>
+          <div class="metric"><span data-i18n="metric.battery">电量</span><b id="battery">—</b></div>
+          <div class="metric"><span data-i18n="metric.navigation">导航</span><b id="navigation">—</b></div>
+          <div class="metric"><span data-i18n="metric.map">地图</span><b id="mapPhase">—</b></div>
+          <div class="metric"><span data-i18n="metric.cameraAge">相机延迟</span><b id="cameraAge">—</b></div>
         </div>
-        <div id="people" class="people"><div class="person"><span>暂无人脸指标</span></div></div>
+        <div id="people" class="people"><div class="person"><span data-i18n="people.none">暂无人脸指标</span></div></div>
       </section>
       <section class="panel">
-        <h2>基础运动 / MANUAL MOTION</h2>
+        <h2 data-i18n="motion.heading">基础运动 / 手动移动</h2>
         <div class="controls">
-          <button class="move" data-move="left">左移 <kbd>A</kbd></button>
-          <button class="move" data-move="forward">前进 <kbd>W</kbd></button>
-          <button class="move" data-move="right">右移 <kbd>D</kbd></button>
-          <button class="move" data-move="turnLeft">左转 <kbd>Q</kbd></button>
-          <button class="danger" onclick="emergencyStop()">紧急停止 <kbd>Space</kbd></button>
-          <button class="move" data-move="turnRight">右转 <kbd>E</kbd></button>
+          <button class="move" data-move="left"><span data-i18n="move.left">左移</span> <kbd>A</kbd></button>
+          <button class="move" data-move="forward"><span data-i18n="move.forward">前进</span> <kbd>W</kbd></button>
+          <button class="move" data-move="right"><span data-i18n="move.right">右移</span> <kbd>D</kbd></button>
+          <button class="move" data-move="turnLeft"><span data-i18n="move.turnLeft">左转</span> <kbd>Q</kbd></button>
+          <button class="danger" onclick="emergencyStop()"><span data-i18n="move.emergency">紧急停止</span> <kbd>Space</kbd></button>
+          <button class="move" data-move="turnRight"><span data-i18n="move.turnRight">右转</span> <kbd>E</kbd></button>
           <span></span>
-          <button class="move" data-move="backward">后退 <kbd>S</kbd></button>
+          <button class="move" data-move="backward"><span data-i18n="move.backward">后退</span> <kbd>S</kbd></button>
           <span></span>
         </div>
-        <p class="hint">Shift 为受限快速档，Ctrl 为慢速精细档。控制报文中断超过 500 ms，机器人端自动停止。</p>
+        <p class="hint" data-i18n="motion.hint">Shift 为受限快速档，Ctrl 为慢速精细档。控制报文中断超过 500 ms，机器人端自动停止。</p>
       </section>
       <section class="panel">
-        <h2>姿态与任务动作 / ACTION MATRIX</h2>
+        <h2 data-i18n="actions.heading">姿态与任务动作 / 动作矩阵</h2>
         <div class="actions">
-          <button onclick="act('stand_up')">站起 <kbd>1</kbd></button>
-          <button onclick="act('lie_down')">趴下保持 <kbd>2</kbd></button>
-          <button onclick="act('sit')">坐下 <kbd>3</kbd></button>
-          <button onclick="act('wave')">招手 <kbd>4</kbd></button>
-          <button onclick="act('stretch')">玩耍鞠躬 <kbd>5</kbd></button>
-          <button onclick="act('tail_wag')">摇屁股 <kbd>6</kbd></button>
-          <button onclick="act('happy')">开心动作 <kbd>7</kbd></button>
-          <button onclick="act('paw')">扒地 <kbd>8</kbd></button>
-          <button class="primary cruise-only" onclick="act('scan_now')">立即仰头检测 <kbd>F</kbd></button>
-          <button class="primary cruise-only" onclick="approachNearest()">接近最近的人 <kbd>N</kbd></button>
-          <button onclick="act('stop_follow')">停止跟随</button>
-          <button class="danger" onclick="act('stop')">停止导航</button>
-          <a class="button" href="http://localhost:3000/lidar" target="_blank">三维地图 <kbd>L</kbd></a>
-          <a class="button" href="__NIGHTWATCH_FORM_URL__" target="_blank">休息问卷</a>
+          <button onclick="act('stand_up')"><span data-i18n="action.stand">站起</span> <kbd>1</kbd></button>
+          <button onclick="act('lie_down')"><span data-i18n="action.lie">趴下保持</span> <kbd>2</kbd></button>
+          <button onclick="act('sit')"><span data-i18n="action.sit">坐下</span> <kbd>3</kbd></button>
+          <button onclick="act('wave')"><span data-i18n="action.wave">招手</span> <kbd>4</kbd></button>
+          <button onclick="act('stretch')"><span data-i18n="action.stretch">玩耍鞠躬</span> <kbd>5</kbd></button>
+          <button onclick="act('tail_wag')"><span data-i18n="action.tail">摇屁股</span> <kbd>6</kbd></button>
+          <button onclick="act('happy')"><span data-i18n="action.happy">开心动作</span> <kbd>7</kbd></button>
+          <button onclick="act('paw')"><span data-i18n="action.paw">扒地</span> <kbd>8</kbd></button>
+          <button class="primary cruise-only" onclick="act('scan_now')"><span data-i18n="action.scan">立即仰头检测</span> <kbd>F</kbd></button>
+          <button class="primary cruise-only" onclick="approachNearest()"><span data-i18n="action.nearest">接近最近的人</span> <kbd>N</kbd></button>
+          <button onclick="act('stop_follow')"><span data-i18n="action.stopFollow">停止跟随</span></button>
+          <button class="danger" onclick="act('stop')"><span data-i18n="action.stopNav">停止导航</span></button>
+          <a class="button" href="http://localhost:3000/lidar" target="_blank"><span data-i18n="action.lidar">三维地图</span> <kbd>L</kbd></a>
+          <a class="button" href="__NIGHTWATCH_FORM_URL__" target="_blank"><span data-i18n="action.form">休息问卷</span></a>
         </div>
       </section>
     </div>
     <aside class="stack">
       <section class="panel">
-        <h2>任务模式 / MISSION</h2>
+        <h2 data-i18n="mission.heading">任务模式 / MISSION</h2>
         <div class="mode">
-          <button id="modeExploration" onclick="setMission('exploration')">探索模式<br><small>只建图</small></button>
-          <button id="modeCruise" onclick="setMission('cruise')">巡航模式<br><small>检测与互动</small></button>
+          <button id="modeExploration" onclick="setMission('exploration')"><span data-i18n="mission.exploration">探索模式</span><br><small data-i18n="mission.explorationSub">只建图</small></button>
+          <button id="modeCruise" onclick="setMission('cruise')"><span data-i18n="mission.cruise">巡航模式</span><br><small data-i18n="mission.cruiseSub">检测与互动</small></button>
         </div>
-        <h2>控制模式 / AUTHORITY</h2>
+        <h2 data-i18n="control.heading">控制模式 / 控制权</h2>
         <div class="mode">
-          <button id="controlAutonomous" onclick="setControl('autonomous')">自主行动</button>
-          <button id="controlManual" onclick="setControl('manual')">手动接管 <kbd>M</kbd></button>
+          <button id="controlAutonomous" onclick="setControl('autonomous')"><span data-i18n="control.autonomous">自主行动</span></button>
+          <button id="controlManual" onclick="setControl('manual')"><span data-i18n="control.manual">手动接管</span> <kbd>M</kbd></button>
         </div>
         <label class="row hint">
           <input id="takeover" type="checkbox" onchange="setAutoTakeover(this.checked)">
-          手动巡航时允许疲劳告警自动接管
+          <span data-i18n="control.takeover">手动巡航时允许疲劳告警自动接管</span>
         </label>
       </section>
       <section class="panel">
-        <h2>巡航检测节奏 / CADENCE</h2>
+        <h2 data-i18n="cadence.heading">巡航检测节奏 / CADENCE</h2>
         <div class="settings">
-          <label>巡航 <input id="patrolInterval" type="number" min="30" max="300" step="10" value="90"> 秒</label>
-          <label>仰头检测 <input id="scanDuration" type="number" min="10" max="60" step="5" value="20"> 秒</label>
-          <button onclick="saveScanSettings()">保存</button>
+          <label><span data-i18n="cadence.patrol">巡航</span> <input id="patrolInterval" type="number" min="30" max="300" step="10" value="90"> <span data-i18n="unit.seconds">秒</span></label>
+          <label><span data-i18n="cadence.scan">仰头检测</span> <input id="scanDuration" type="number" min="10" max="60" step="5" value="20"> <span data-i18n="unit.seconds">秒</span></label>
+          <button onclick="saveScanSettings()"><span data-i18n="cadence.save">保存</span></button>
         </div>
-        <p class="hint">默认自主巡航 90 秒后停下仰头检测 20 秒，只累计真实巡航运动时间。</p>
+        <p class="hint" data-i18n="cadence.hint">默认自主巡航 90 秒后停下仰头检测 20 秒，只累计真实巡航运动时间。</p>
       </section>
       <section class="panel">
-        <h2>命令状态 / COMMAND LOG</h2>
-        <div id="status">工作台已就绪。</div>
+        <h2 data-i18n="status.heading">命令状态 / COMMAND LOG</h2>
+        <div id="status" data-i18n="status.ready">工作台已就绪。</div>
       </section>
       <section class="panel">
-        <h2>机器人对话 / DIRECT LINK</h2>
+        <h2 data-i18n="chat.heading">机器人对话 / DIRECT LINK</h2>
         <div id="chat"></div>
         <form id="ask">
-          <input id="query" autocomplete="off" placeholder="告诉机器人要做什么…" required>
-          <button class="primary">发送</button>
+          <input id="query" autocomplete="off" placeholder="告诉机器人要做什么…" data-i18n-placeholder="chat.placeholder" required>
+          <button class="primary"><span data-i18n="chat.send">发送</span></button>
         </form>
-        <p class="hint">输入框聚焦时所有键盘控制都会禁用。</p>
+        <p class="hint" data-i18n="chat.hint">输入框聚焦时所有键盘控制都会禁用。</p>
       </section>
     </aside>
   </div>
 </main>
 <dialog id="mapDialog">
-  <h2>地图探索已完成</h2>
-  <p>将在 <b id="mapCountdown">60</b> 秒后自动切换到巡航模式。你也可以继续探索，等待出现新的未知区域。</p>
+  <h2 data-i18n="dialog.heading">地图探索已完成</h2>
+  <p><span data-i18n="dialog.prefix">将在</span> <b id="mapCountdown">60</b> <span data-i18n="dialog.suffix">秒后自动切换到巡航模式。你也可以继续探索，等待出现新的未知区域。</span></p>
   <div class="row">
-    <button onclick="resolveMapPrompt(true)">继续探索</button>
-    <button class="primary" onclick="resolveMapPrompt(false)">现在开始巡航</button>
+    <button onclick="resolveMapPrompt(true)"><span data-i18n="dialog.stay">继续探索</span></button>
+    <button class="primary" onclick="resolveMapPrompt(false)"><span data-i18n="dialog.cruise">现在开始巡航</span></button>
   </div>
 </dialog>
 <script>
@@ -439,6 +479,357 @@
   const video = document.getElementById('robotVideo');
   const videoOverlay = document.getElementById('videoOverlay');
   const mapDialog = document.getElementById('mapDialog');
+  const LANGUAGE_STORAGE_KEY = 'nightwatch.operator.language';
+  const translations = {
+    zh: {
+      'page.title': '守夜犬工作台',
+      'language.label': '语言',
+      'header.index': 'OPERATOR SYSTEM / UNIT 01 / 夜间行动终端',
+      'header.brand': '守夜犬',
+      'header.subtitle': 'NIGHT WATCH / OPERATOR CONSOLE',
+      'header.help': '工作台使用说明 →',
+      'video.heading': '机器人视野 / 疲劳指数',
+      'video.analysis': '分析',
+      'video.raw': '原始',
+      'video.alt': '机器人相机视频',
+      'metric.mission': '任务模式',
+      'metric.control': '控制模式',
+      'metric.behavior': '当前行为',
+      'metric.owner': '运动所有者',
+      'metric.fatigue': '疲劳检测',
+      'metric.interaction': '交互阶段',
+      'metric.battery': '电量',
+      'metric.navigation': '导航',
+      'metric.map': '地图',
+      'metric.cameraAge': '相机延迟',
+      'people.none': '暂无人脸指标',
+      'people.noFace': '当前画面未检测到有效人脸',
+      'people.offline': '疲劳服务离线，指标已清空',
+      'people.anonymous': '匿名目标',
+      'people.fatigue': '疲劳',
+      'people.quality': '质量',
+      'motion.heading': '基础运动 / 手动移动',
+      'move.left': '左移',
+      'move.forward': '前进',
+      'move.right': '右移',
+      'move.turnLeft': '左转',
+      'move.emergency': '紧急停止',
+      'move.turnRight': '右转',
+      'move.backward': '后退',
+      'motion.hint': 'Shift 为受限快速档，Ctrl 为慢速精细档。控制报文中断超过 500 ms，机器人端自动停止。',
+      'actions.heading': '姿态与任务动作 / 动作矩阵',
+      'action.stand': '站起',
+      'action.lie': '趴下保持',
+      'action.sit': '坐下',
+      'action.wave': '招手',
+      'action.stretch': '玩耍鞠躬',
+      'action.tail': '摇屁股',
+      'action.happy': '开心动作',
+      'action.paw': '扒地',
+      'action.scan': '立即仰头检测',
+      'action.nearest': '接近最近的人',
+      'action.stopFollow': '停止跟随',
+      'action.stopNav': '停止导航',
+      'action.lidar': '三维地图',
+      'action.form': '休息问卷',
+      'mission.heading': '任务模式 / MISSION',
+      'mission.exploration': '探索模式',
+      'mission.explorationSub': '只建图',
+      'mission.cruise': '巡航模式',
+      'mission.cruiseSub': '检测与互动',
+      'control.heading': '控制模式 / 控制权',
+      'control.autonomous': '自主行动',
+      'control.manual': '手动接管',
+      'control.takeover': '手动巡航时允许疲劳告警自动接管',
+      'cadence.heading': '巡航检测节奏 / CADENCE',
+      'cadence.patrol': '巡航',
+      'cadence.scan': '仰头检测',
+      'cadence.save': '保存',
+      'cadence.hint': '默认自主巡航 90 秒后停下仰头检测 20 秒，只累计真实巡航运动时间。',
+      'unit.seconds': '秒',
+      'status.heading': '命令状态 / COMMAND LOG',
+      'status.ready': '工作台已就绪。',
+      'status.executing': '正在执行…',
+      'status.completed': '命令已执行。',
+      'status.operationFailed': '操作失败：{detail}',
+      'status.policyUnavailable': '策略服务不可用',
+      'status.takeoverOn': '手动疲劳自动接管已开启。',
+      'status.takeoverOff': '手动疲劳自动接管已关闭。',
+      'status.settingFailed': '设置失败：{detail}',
+      'status.approaching': '正在接近最近的人并开始后续交互。',
+      'status.manualFirst': '请先切换到手动接管。',
+      'status.manualFailed': '手动控制失败：{detail}',
+      'status.robotHold': '机器人保持：{detail}',
+      'status.robotHandling': '机器人正在处理请求…',
+      'status.sent': '请求已发送。',
+      'status.sendFailed': '发送失败：{detail}',
+      'error.commandRejected': '命令被拒绝',
+      'error.requestRejected': '请求被拒绝',
+      'chat.heading': '机器人对话 / DIRECT LINK',
+      'chat.placeholder': '告诉机器人要做什么…',
+      'chat.send': '发送',
+      'chat.hint': '输入框聚焦时所有键盘控制都会禁用。',
+      'chat.you': '你',
+      'chat.robot': '机器人',
+      'dialog.heading': '地图探索已完成',
+      'dialog.prefix': '将在',
+      'dialog.suffix': '秒后自动切换到巡航模式。你也可以继续探索，等待出现新的未知区域。',
+      'dialog.stay': '继续探索',
+      'dialog.cruise': '现在开始巡航',
+      'overlay.modelOffline': '疲劳模型离线，已回退到原始视频',
+      'overlay.paused': '疲劳检测暂停：{reason}',
+      'fatigue.running': '运行',
+      'fatigue.paused': '暂停 · {reason}',
+      'fatigue.policy': '策略',
+      'fatigue.policyControl': '策略控制',
+      'link.onlineBoth': '● 机器人控制已连接 · 疲劳服务已连接',
+      'link.robotOnly': '● 机器人控制已连接 · 疲劳服务离线',
+      'link.offlinePreview': '● 离线安全预览 · 所有硬件命令已拦截',
+      'link.offline': '● 机器人控制离线',
+      'link.connecting': '● 正在连接机器人',
+      'enum.mission.cruise': '巡航',
+      'enum.mission.exploration': '探索',
+      'enum.control.manual': '手动',
+      'enum.control.autonomous': '自主',
+      'enum.behavior.hold': '保持',
+      'enum.behavior.explore': '探索',
+      'enum.behavior.patrol': '巡航',
+      'enum.behavior.observe': '观察',
+      'enum.behavior.follow': '跟随',
+      'enum.behavior.manual': '手动',
+      'enum.behavior.escort': '护送',
+      'enum.behavior.intervene': '人员交互',
+      'enum.behavior.return_home': '低电量返航',
+      'enum.behavior.explicit_task': '明确任务',
+      'enum.behavior.express': '姿态动作',
+      'enum.owner.safety': '安全系统',
+      'enum.owner.curiosity': '自主监督器',
+      'enum.owner.operator': '操作员',
+      'enum.owner.battery': '电量保护',
+      'enum.owner.person_follow': '人员跟随',
+      'enum.owner.scheduled_scan': '定时检测',
+      'enum.owner.operator_scan': '操作员检测',
+      'enum.owner.offline_console': '离线工作台',
+      'enum.owner.intervention': '人员干预',
+      'enum.owner.escort': '护送流程',
+      'enum.owner.navigation': '导航任务',
+      'enum.interaction.idle': '空闲',
+      'enum.interaction.scheduled_scan': '定时检测',
+      'enum.interaction.forced_scan': '立即检测',
+      'enum.interaction.fatigue_candidate': '疲劳候选',
+      'enum.interaction.approaching': '正在接近',
+      'enum.interaction.offering_form': '提示问卷',
+      'enum.interaction.waiting_form': '等待问卷',
+      'enum.interaction.farewell': '友好告别',
+      'enum.interaction.escorting': '正在护送',
+      'enum.interaction.arrived': '已到达',
+      'enum.interaction.retreating': '正在离开',
+      'enum.navigation.idle': '空闲',
+      'enum.navigation.following_path': '沿路径移动',
+      'enum.navigation.planning': '规划中',
+      'enum.navigation.recovery': '导航恢复中',
+      'enum.navigation.unavailable': '不可用',
+      'enum.navigation.offline': '离线',
+      'enum.map.mapped': '已完成',
+      'enum.map.exploring': '探索中',
+      'enum.map.not_ready': '未就绪',
+      'enum.map.unavailable': '不可用',
+      'pause.exploration_mode': '探索模式',
+      'pause.interaction_active': '人员交互中',
+      'pause.robot_offline': '机器人离线',
+      'pause.policy_control': '策略控制',
+      'pause.safety_hold': '安全保持',
+      'pause.operator_lying_down': '操作员要求趴下',
+      'pause.battery_unknown': '电量未知',
+      'pause.battery_low_home_unknown': '低电量且返航点未知',
+      'pause.battery_home': '低电量已返航',
+      'pause.return_home_route_blocked': '返航路线受阻',
+      'pause.sensors_not_ready': '传感器未就绪',
+      'pause.robot_not_started': '机器狗尚未启动',
+      'pause.starting': '正在启动',
+      'pause.battery_low': '电量过低',
+      'pause.curiosity_disabled': '自主监督器已关闭',
+      'pause.mission_mode_invalid': '任务模式无效',
+      'pause.return_home_retrying': '正在重试返航',
+      'pause.return_home_sensors_not_ready': '返航传感器未就绪',
+      'pause.stuck_help': '机器人受困，等待协助',
+      'pause.supervisor_error': '自主监督器异常'
+    },
+    en: {
+      'page.title': 'Night Watch Operator Console',
+      'language.label': 'Language',
+      'header.index': 'OPERATOR SYSTEM / UNIT 01 / NIGHT OPERATIONS',
+      'header.brand': 'NIGHT WATCH',
+      'header.subtitle': 'ROBOT DOG / OPERATOR CONSOLE',
+      'header.help': 'Operator guide →',
+      'video.heading': 'ROBOT VIEW / FATIGUE INDEX',
+      'video.analysis': 'Analysis',
+      'video.raw': 'Raw',
+      'video.alt': 'Robot camera video',
+      'metric.mission': 'Mission mode',
+      'metric.control': 'Control mode',
+      'metric.behavior': 'Current behavior',
+      'metric.owner': 'Motion owner',
+      'metric.fatigue': 'Fatigue detection',
+      'metric.interaction': 'Interaction stage',
+      'metric.battery': 'Battery',
+      'metric.navigation': 'Navigation',
+      'metric.map': 'Map',
+      'metric.cameraAge': 'Camera latency',
+      'people.none': 'No face metrics yet',
+      'people.noFace': 'No valid face detected in the current frame',
+      'people.offline': 'Fatigue service offline; metrics cleared',
+      'people.anonymous': 'Anonymous subject',
+      'people.fatigue': 'Fatigue',
+      'people.quality': 'Quality',
+      'motion.heading': 'MANUAL MOTION',
+      'move.left': 'Strafe left',
+      'move.forward': 'Forward',
+      'move.right': 'Strafe right',
+      'move.turnLeft': 'Turn left',
+      'move.emergency': 'Emergency stop',
+      'move.turnRight': 'Turn right',
+      'move.backward': 'Backward',
+      'motion.hint': 'Hold Shift for the bounded fast gear and Ctrl for precision. The robot stops if control packets are interrupted for more than 500 ms.',
+      'actions.heading': 'POSTURE & TASK ACTIONS / ACTION MATRIX',
+      'action.stand': 'Stand up',
+      'action.lie': 'Lie down & hold',
+      'action.sit': 'Sit',
+      'action.wave': 'Wave',
+      'action.stretch': 'Play bow',
+      'action.tail': 'Wiggle hips',
+      'action.happy': 'Happy motion',
+      'action.paw': 'Paw scrape',
+      'action.scan': 'Stop & scan now',
+      'action.nearest': 'Approach nearest person',
+      'action.stopFollow': 'Stop following',
+      'action.stopNav': 'Stop navigation',
+      'action.lidar': '3D lidar map',
+      'action.form': 'Rest form',
+      'mission.heading': 'MISSION MODE',
+      'mission.exploration': 'Exploration',
+      'mission.explorationSub': 'Map building only',
+      'mission.cruise': 'Cruise',
+      'mission.cruiseSub': 'Detection & interaction',
+      'control.heading': 'CONTROL AUTHORITY',
+      'control.autonomous': 'Autonomous',
+      'control.manual': 'Manual takeover',
+      'control.takeover': 'Allow fatigue alerts to take over during manual cruise',
+      'cadence.heading': 'CRUISE SCAN CADENCE',
+      'cadence.patrol': 'Cruise',
+      'cadence.scan': 'Head-up scan',
+      'cadence.save': 'Save',
+      'cadence.hint': 'By default, autonomous cruise stops for a 20-second head-up scan after 90 seconds of actual patrol motion.',
+      'unit.seconds': 'sec',
+      'status.heading': 'COMMAND STATUS / COMMAND LOG',
+      'status.ready': 'Operator console ready.',
+      'status.executing': 'Executing…',
+      'status.completed': 'Command completed.',
+      'status.operationFailed': 'Operation failed: {detail}',
+      'status.policyUnavailable': 'Policy service unavailable',
+      'status.takeoverOn': 'Manual fatigue auto-takeover enabled.',
+      'status.takeoverOff': 'Manual fatigue auto-takeover disabled.',
+      'status.settingFailed': 'Setting failed: {detail}',
+      'status.approaching': 'Approaching the nearest person and starting the interaction.',
+      'status.manualFirst': 'Switch to manual takeover first.',
+      'status.manualFailed': 'Manual control failed: {detail}',
+      'status.robotHold': 'Robot hold: {detail}',
+      'status.robotHandling': 'Robot is processing the request…',
+      'status.sent': 'Request sent.',
+      'status.sendFailed': 'Send failed: {detail}',
+      'error.commandRejected': 'Command rejected',
+      'error.requestRejected': 'Request rejected',
+      'chat.heading': 'ROBOT DIALOGUE / DIRECT LINK',
+      'chat.placeholder': 'Tell the robot what to do…',
+      'chat.send': 'Send',
+      'chat.hint': 'All keyboard controls are disabled while the input field is focused.',
+      'chat.you': 'you',
+      'chat.robot': 'robot',
+      'dialog.heading': 'Map exploration complete',
+      'dialog.prefix': 'Cruise mode will start automatically in',
+      'dialog.suffix': 'seconds. You can also keep exploring and wait for new unknown areas.',
+      'dialog.stay': 'Keep exploring',
+      'dialog.cruise': 'Start cruise now',
+      'overlay.modelOffline': 'Fatigue model offline; using the raw video feed',
+      'overlay.paused': 'Fatigue detection paused: {reason}',
+      'fatigue.running': 'Running',
+      'fatigue.paused': 'Paused · {reason}',
+      'fatigue.policy': 'Policy',
+      'fatigue.policyControl': 'Policy control',
+      'link.onlineBoth': '● Robot control connected · Fatigue service connected',
+      'link.robotOnly': '● Robot control connected · Fatigue service offline',
+      'link.offlinePreview': '● Safe offline preview · All hardware commands blocked',
+      'link.offline': '● Robot control offline',
+      'link.connecting': '● Connecting to robot',
+      'enum.mission.cruise': 'Cruise',
+      'enum.mission.exploration': 'Exploration',
+      'enum.control.manual': 'Manual',
+      'enum.control.autonomous': 'Autonomous',
+      'enum.behavior.hold': 'Hold',
+      'enum.behavior.explore': 'Explore',
+      'enum.behavior.patrol': 'Patrol',
+      'enum.behavior.observe': 'Observe',
+      'enum.behavior.follow': 'Follow',
+      'enum.behavior.manual': 'Manual',
+      'enum.behavior.escort': 'Escort',
+      'enum.behavior.intervene': 'Person interaction',
+      'enum.behavior.return_home': 'Low-battery return',
+      'enum.behavior.explicit_task': 'Explicit task',
+      'enum.behavior.express': 'Posture action',
+      'enum.owner.safety': 'Safety system',
+      'enum.owner.curiosity': 'Autonomy supervisor',
+      'enum.owner.operator': 'Operator',
+      'enum.owner.battery': 'Battery protection',
+      'enum.owner.person_follow': 'Person follow',
+      'enum.owner.scheduled_scan': 'Scheduled scan',
+      'enum.owner.operator_scan': 'Operator scan',
+      'enum.owner.offline_console': 'Offline console',
+      'enum.owner.intervention': 'Person intervention',
+      'enum.owner.escort': 'Escort flow',
+      'enum.owner.navigation': 'Navigation task',
+      'enum.interaction.idle': 'Idle',
+      'enum.interaction.scheduled_scan': 'Scheduled scan',
+      'enum.interaction.forced_scan': 'Immediate scan',
+      'enum.interaction.fatigue_candidate': 'Fatigue candidate',
+      'enum.interaction.approaching': 'Approaching',
+      'enum.interaction.offering_form': 'Offering form',
+      'enum.interaction.waiting_form': 'Waiting for form',
+      'enum.interaction.farewell': 'Friendly farewell',
+      'enum.interaction.escorting': 'Escorting',
+      'enum.interaction.arrived': 'Arrived',
+      'enum.interaction.retreating': 'Retreating',
+      'enum.navigation.idle': 'Idle',
+      'enum.navigation.following_path': 'Following path',
+      'enum.navigation.planning': 'Planning',
+      'enum.navigation.recovery': 'Navigation recovery',
+      'enum.navigation.unavailable': 'Unavailable',
+      'enum.navigation.offline': 'Offline',
+      'enum.map.mapped': 'Mapped',
+      'enum.map.exploring': 'Exploring',
+      'enum.map.not_ready': 'Not ready',
+      'enum.map.unavailable': 'Unavailable',
+      'pause.exploration_mode': 'Exploration mode',
+      'pause.interaction_active': 'Person interaction active',
+      'pause.robot_offline': 'Robot offline',
+      'pause.policy_control': 'Policy control',
+      'pause.safety_hold': 'Safety hold',
+      'pause.operator_lying_down': 'Operator requested lie-down',
+      'pause.battery_unknown': 'Battery unknown',
+      'pause.battery_low_home_unknown': 'Low battery; home unknown',
+      'pause.battery_home': 'Low battery; robot at home',
+      'pause.return_home_route_blocked': 'Return-home route blocked',
+      'pause.sensors_not_ready': 'Sensors not ready',
+      'pause.robot_not_started': 'Robot not started',
+      'pause.starting': 'Starting',
+      'pause.battery_low': 'Critically low battery',
+      'pause.curiosity_disabled': 'Autonomy supervisor disabled',
+      'pause.mission_mode_invalid': 'Invalid mission mode',
+      'pause.return_home_retrying': 'Retrying return home',
+      'pause.return_home_sensors_not_ready': 'Return-home sensors not ready',
+      'pause.stuck_help': 'Robot is stuck and needs assistance',
+      'pause.supervisor_error': 'Autonomy supervisor error'
+    }
+  };
   let statusSnapshot = {};
   let videoMode = 'analysis';
   // Epoch-based start keeps packets ordered across page reloads and old tabs.
@@ -450,13 +841,137 @@
   let serverOnline = false;
   let mapPromptSeen = false;
   let analysisFallback = false;
-  let policyInteractionText = '';
+  let policyInteraction = null;
+  let latestPeople = [];
+  let statusNotice = {key: 'status.ready', vars: {}};
+  let linkNotice = 'link.connecting';
+  let uiLanguage = (() => {
+    try { return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'en' ? 'en' : 'zh'; }
+    catch (_) { return 'zh'; }
+  })();
 
-  function setStatus(message) { statusEl.textContent = message; }
+  function t(key, vars = {}, fallback = key) {
+    let value = translations[uiLanguage]?.[key] ?? translations.zh[key] ?? fallback;
+    Object.entries(vars).forEach(([name, replacement]) => {
+      value = value.replaceAll(`{${name}}`, String(replacement));
+    });
+    return value;
+  }
+  function normalized(value) {
+    return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  }
+  function enumText(group, value) {
+    if (value == null || value === '') return '—';
+    return t(`enum.${group}.${normalized(value)}`, {}, String(value));
+  }
+  function pauseReason(value) {
+    if (value == null || value === '') return t('fatigue.policy');
+    return t(`pause.${normalized(value)}`, {}, String(value).replaceAll('_', ' '));
+  }
+  function setStatusKey(key, vars = {}) {
+    statusNotice = {key, vars};
+    statusEl.textContent = t(key, vars);
+  }
+  function renderPeople() {
+    const box = document.getElementById('people');
+    box.innerHTML = '';
+    if (!serverOnline) {
+      const row = document.createElement('div'); row.className = 'person';
+      const text = document.createElement('span'); text.textContent = t('people.offline');
+      row.appendChild(text); box.appendChild(row); return;
+    }
+    if (!latestPeople.length) {
+      const row = document.createElement('div'); row.className = 'person';
+      const text = document.createElement('span'); text.textContent = t('people.noFace');
+      row.appendChild(text); box.appendChild(row); return;
+    }
+    latestPeople.forEach(person => {
+      const row = document.createElement('div'); row.className = 'person';
+      const id = document.createElement('span'); id.textContent = person.person_id || t('people.anonymous');
+      const scoreEl = document.createElement('span'); scoreEl.className = 'score';
+      scoreEl.textContent = `${t('people.fatigue')} ${Number(person.score || 0).toFixed(0)}`;
+      const quality = document.createElement('span');
+      quality.textContent = `${t('people.quality')} ${Number(person.quality || person.confidence || 0).toFixed(2)}`;
+      row.append(id, scoreEl, quality); box.appendChild(row);
+    });
+  }
+  function renderStatusValues(status) {
+    if (!status || !Object.keys(status).length) return;
+    setText('mission', enumText('mission', status.mission_mode));
+    setText('control', enumText('control', status.control_mode));
+    setText('behavior', enumText('behavior', status.behavior));
+    setText('owner', enumText('owner', status.owner));
+    setText(
+      'fatigue',
+      status.fatigue_detection === 'enabled'
+        ? t('fatigue.running')
+        : t('fatigue.paused', {reason: pauseReason(status.fatigue_pause_reason)})
+    );
+    const interactionState = policyInteraction?.state || status.interaction_state;
+    const interactionText = enumText('interaction', interactionState);
+    setText(
+      'interaction',
+      policyInteraction?.remaining_s != null
+        ? `${interactionText} · ${Math.ceil(policyInteraction.remaining_s)}s`
+        : interactionText
+    );
+    setText('battery', status.battery_soc == null ? null : status.battery_soc + '%');
+    setText('navigation', enumText('navigation', status.navigation));
+    setText('mapPhase', enumText('map', status.map_phase));
+    setText('cameraAge', status.camera_age_ms == null ? null : Math.round(status.camera_age_ms) + ' ms');
+    videoOverlay.style.display = status.fatigue_detection === 'enabled' && !analysisFallback ? 'none' : 'block';
+    if (analysisFallback) {
+      videoOverlay.textContent = t('overlay.modelOffline');
+    } else if (status.fatigue_detection !== 'enabled') {
+      videoOverlay.textContent = t('overlay.paused', {
+        reason: pauseReason(status.fatigue_pause_reason || 'policy_control')
+      });
+    }
+    const robotConnected = status.robot_connected !== false;
+    setLinkState(
+      robotConnected
+        ? (serverOnline ? 'link.onlineBoth' : 'link.robotOnly')
+        : 'link.offlinePreview'
+    );
+  }
+  function setLinkState(key) {
+    linkNotice = key;
+    document.getElementById('linkState').textContent = t(key);
+  }
+  function setLanguage(language) {
+    uiLanguage = language === 'en' ? 'en' : 'zh';
+    try { localStorage.setItem(LANGUAGE_STORAGE_KEY, uiLanguage); } catch (_) {}
+    document.documentElement.lang = uiLanguage === 'en' ? 'en' : 'zh-CN';
+    document.title = t('page.title');
+    document.querySelectorAll('[data-i18n]').forEach(element => {
+      element.textContent = t(element.dataset.i18n, {}, element.textContent);
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
+      element.setAttribute('placeholder', t(element.dataset.i18nPlaceholder));
+    });
+    document.querySelectorAll('[data-i18n-alt]').forEach(element => {
+      element.setAttribute('alt', t(element.dataset.i18nAlt));
+    });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
+      element.setAttribute('aria-label', t(element.dataset.i18nAriaLabel));
+    });
+    document.getElementById('languageZh').classList.toggle('active', uiLanguage === 'zh');
+    document.getElementById('languageEn').classList.toggle('active', uiLanguage === 'en');
+    document.getElementById('languageZh').setAttribute('aria-pressed', String(uiLanguage === 'zh'));
+    document.getElementById('languageEn').setAttribute('aria-pressed', String(uiLanguage === 'en'));
+    statusEl.textContent = t(statusNotice.key, statusNotice.vars);
+    setLinkState(linkNotice);
+    renderPeople();
+    renderStatusValues(statusSnapshot);
+  }
   function setText(id, value) { document.getElementById(id).textContent = value == null || value === '' ? '—' : value; }
-  function line(css, text) {
+  function line(css, text, roleKey) {
     const div = document.createElement('div');
-    div.className = css; div.textContent = text;
+    div.className = css;
+    const role = document.createElement('span');
+    role.dataset.i18n = roleKey;
+    role.textContent = t(roleKey);
+    div.append(role, document.createTextNode(' > ' + text));
     document.getElementById('chat').appendChild(div);
     document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
   }
@@ -470,16 +985,16 @@
       body: JSON.stringify({action, ...args}),
     });
     const data = await response.json();
-    if (!response.ok || !data.success) throw new Error(data.message || '命令被拒绝');
+    if (!response.ok || !data.success) throw new Error(data.message || t('error.commandRejected'));
     return data;
   }
   async function act(action, args = {}) {
-    setStatus('正在执行…');
+    setStatusKey('status.executing');
     try {
-      const data = await command(action, args);
-      setStatus(data.message);
+      await command(action, args);
+      setStatusKey('status.completed');
     } catch (error) {
-      setStatus('操作失败：' + error.message);
+      setStatusKey('status.operationFailed', {detail: error.message});
     }
   }
   async function setMission(mode) {
@@ -512,20 +1027,20 @@
       const response = await fetch(API_BASE + '/api/robot/fatigue-auto-takeover', {
         method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({enabled}),
       });
-      if (!response.ok) throw new Error('策略服务不可用');
-      setStatus(enabled ? '手动疲劳自动接管已开启。' : '手动疲劳自动接管已关闭。');
+      if (!response.ok) throw new Error(t('status.policyUnavailable'));
+      setStatusKey(enabled ? 'status.takeoverOn' : 'status.takeoverOff');
     } catch (error) {
       document.getElementById('takeover').checked = false;
-      setStatus('设置失败：' + error.message);
+      setStatusKey('status.settingFailed', {detail: error.message});
     }
   }
   async function approachNearest() {
     try {
       const response = await fetch(API_BASE + '/api/robot/approach-nearest', {method:'POST'});
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || '请求被拒绝');
-      setStatus('正在接近最近的人并开始后续交互。');
-    } catch (error) { setStatus('操作失败：' + error.message); }
+      if (!response.ok) throw new Error(data.detail || t('error.requestRejected'));
+      setStatusKey('status.approaching');
+    } catch (error) { setStatusKey('status.operationFailed', {detail: error.message}); }
   }
   async function resolveMapPrompt(stay) {
     await act('map_prompt', {stay_exploring: stay});
@@ -540,7 +1055,7 @@
       video.onerror = null; video.src = RAW_VIDEO;
       analysisFallback = true;
       videoOverlay.style.display = 'block';
-      videoOverlay.textContent = '疲劳模型离线，已回退到原始视频';
+      videoOverlay.textContent = t('overlay.modelOffline');
     } : null;
     video.src = (mode === 'analysis' ? ANALYSIS_VIDEO : RAW_VIDEO) + '?t=' + Date.now();
   }
@@ -560,14 +1075,14 @@
     const v = movementVector();
     const signature = `${v.x.toFixed(3)}:${v.y.toFixed(3)}:${v.wz.toFixed(3)}`;
     if (statusSnapshot.control_mode !== 'manual' && signature !== '0.000:0.000:0.000') {
-      setStatus('请先切换到手动接管。'); stopMovement(); return;
+      setStatusKey('status.manualFirst'); stopMovement(); return;
     }
     if (signature === '0.000:0.000:0.000' && signature === lastMovementSignature) return;
     lastMovementSignature = signature;
     try {
       await command('teleop', {sequence: ++manualSequence, ...v});
     } catch (error) {
-      stopMovement(); setStatus('手动控制失败：' + error.message);
+      stopMovement(); setStatusKey('status.manualFailed', {detail: error.message});
     }
   }
   function startMovement() {
@@ -633,28 +1148,25 @@
       const score = await scoreResponse.json();
       serverOnline = true;
       document.getElementById('takeover').checked = Boolean(robot.fatigue_auto_takeover);
-      const people = Array.isArray(score.people) && score.people.length ? score.people : (score.person_id ? [score] : []);
-      const box = document.getElementById('people');
-      box.innerHTML = '';
-      if (!people.length) box.innerHTML = '<div class="person"><span>当前画面未检测到有效人脸</span></div>';
-      people.forEach(person => {
-        const row = document.createElement('div'); row.className = 'person';
-        const id = document.createElement('span'); id.textContent = person.person_id || '匿名目标';
-        const scoreEl = document.createElement('span'); scoreEl.className = 'score'; scoreEl.textContent = '疲劳 ' + Number(person.score || 0).toFixed(0);
-        const quality = document.createElement('span'); quality.textContent = '质量 ' + Number(person.quality || person.confidence || 0).toFixed(2);
-        row.append(id, scoreEl, quality); box.appendChild(row);
-      });
+      latestPeople = Array.isArray(score.people) && score.people.length ? score.people : (score.person_id ? [score] : []);
+      renderPeople();
       if (robot.active_interaction?.remaining_s != null) {
-        policyInteractionText = `${robot.interaction_state} · ${Math.ceil(robot.active_interaction.remaining_s)}s`;
+        policyInteraction = {
+          state: robot.interaction_state,
+          remaining_s: robot.active_interaction.remaining_s
+        };
       } else {
-        policyInteractionText = robot.interaction_state && robot.interaction_state !== 'idle'
-          ? robot.interaction_state
-          : '';
+        policyInteraction = robot.interaction_state && robot.interaction_state !== 'idle'
+          ? {state: robot.interaction_state, remaining_s: null}
+          : null;
       }
+      renderStatusValues(statusSnapshot);
     } catch (_) {
       serverOnline = false;
-      policyInteractionText = '';
-      document.getElementById('people').innerHTML = '<div class="person"><span>疲劳服务离线，指标已清空</span></div>';
+      latestPeople = [];
+      policyInteraction = null;
+      renderPeople();
+      renderStatusValues(statusSnapshot);
     }
   }
   async function refreshStatus() {
@@ -663,16 +1175,7 @@
       const status = await response.json();
       if (!response.ok) throw new Error();
       statusSnapshot = status;
-      setText('mission', status.mission_mode === 'cruise' ? '巡航' : '探索');
-      setText('control', status.control_mode === 'manual' ? '手动' : '自主');
-      setText('behavior', status.behavior);
-      setText('owner', status.owner);
-      setText('fatigue', status.fatigue_detection === 'enabled' ? '运行' : `暂停 · ${status.fatigue_pause_reason || '策略'}`);
-      setText('interaction', policyInteractionText || status.interaction_state);
-      setText('battery', status.battery_soc == null ? null : status.battery_soc + '%');
-      setText('navigation', status.navigation);
-      setText('mapPhase', status.map_phase);
-      setText('cameraAge', status.camera_age_ms == null ? null : Math.round(status.camera_age_ms) + ' ms');
+      renderStatusValues(status);
       document.getElementById('modeExploration').classList.toggle('active', status.mission_mode === 'exploration');
       document.getElementById('modeCruise').classList.toggle('active', status.mission_mode === 'cruise');
       document.getElementById('controlAutonomous').classList.toggle('active', status.control_mode === 'autonomous');
@@ -686,43 +1189,37 @@
         document.getElementById('mapCountdown').textContent = Math.ceil(prompt.remaining_s);
         if (!mapDialog.open && !mapPromptSeen) { mapPromptSeen = true; mapDialog.showModal(); }
       } else if (mapDialog.open) { mapDialog.close(); mapPromptSeen = false; }
-      videoOverlay.style.display = status.fatigue_detection === 'enabled' && !analysisFallback ? 'none' : 'block';
-      if (analysisFallback) {
-        videoOverlay.textContent = '疲劳模型离线，已回退到原始视频';
-      } else if (status.fatigue_detection !== 'enabled') {
-        videoOverlay.textContent = '疲劳检测暂停：' + (status.fatigue_pause_reason || '策略控制');
-      }
       const robotConnected = status.robot_connected !== false;
-      document.getElementById('linkState').textContent = robotConnected
-        ? '● 机器人控制已连接' + (serverOnline ? ' · 疲劳服务已连接' : ' · 疲劳服务离线')
-        : '● 离线安全预览 · 所有硬件命令已拦截';
       document.getElementById('linkState').style.color = robotConnected ? '#090909' : '#ffffff';
       document.getElementById('linkState').style.background = robotConnected
         ? (serverOnline ? '#9fe2c2' : '#f2e84b')
         : '#e13123';
       if (!robotConnected) stopMovement();
-      if (status.hold_reason) setStatus('机器人保持：' + status.hold_reason);
+      if (status.hold_reason) setStatusKey('status.robotHold', {detail: pauseReason(status.hold_reason)});
     } catch (_) {
-      document.getElementById('linkState').textContent = '● 机器人控制离线';
+      setLinkState('link.offline');
       document.getElementById('linkState').style.color = '#ffffff';
       document.getElementById('linkState').style.background = '#e13123';
       stopMovement();
     }
   }
   const events = new EventSource('/text_stream/agent_responses');
-  events.onmessage = event => line('robot', 'robot > ' + event.data);
+  events.onmessage = event => line('robot', event.data, 'chat.robot');
   document.getElementById('ask').addEventListener('submit', async event => {
     event.preventDefault();
     const input = document.getElementById('query'); const query = input.value.trim();
     if (!query) return;
-    line('user', 'you > ' + query); input.value = '';
+    line('user', query, 'chat.you'); input.value = '';
     const body = new FormData(); body.append('query', query);
-    setStatus('机器人正在处理请求…');
+    setStatusKey('status.robotHandling');
     try {
       const response = await fetch('/submit_query', {method:'POST', body});
-      const data = await response.json(); setStatus(data.success ? '请求已发送。' : data.message);
-    } catch (error) { setStatus('发送失败：' + error.message); }
+      const data = await response.json();
+      if (data.success) setStatusKey('status.sent');
+      else setStatusKey('status.operationFailed', {detail: data.message || t('error.requestRejected')});
+    } catch (error) { setStatusKey('status.sendFailed', {detail: error.message}); }
   });
+  setLanguage(uiLanguage);
   setVideoMode('analysis');
   refreshStatus(); refreshPolicyStatus();
   window.setInterval(refreshStatus, 1000);

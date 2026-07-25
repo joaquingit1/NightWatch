@@ -58,6 +58,9 @@ OPERATOR_HTML = (
     )
     .replace("__NIGHTWATCH_FORM_URL__", "http://localhost:3000/form")
 )
+OPERATOR_GUIDE_HTML = (
+    ROOT / "nightwatch" / "nightwatch" / "operator_guide.html"
+).read_text(encoding="utf-8")
 
 CAMERA_PLACEHOLDER = """\
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"
@@ -81,6 +84,11 @@ app = FastAPI(title="NightWatch offline operator")
 @app.get("/operator", response_class=HTMLResponse)
 async def operator_console() -> HTMLResponse:
     return HTMLResponse(OPERATOR_HTML)
+
+
+@app.get("/operator/help", response_class=HTMLResponse)
+async def operator_guide() -> HTMLResponse:
+    return HTMLResponse(OPERATOR_GUIDE_HTML)
 
 
 @app.get("/video_feed/camera")
