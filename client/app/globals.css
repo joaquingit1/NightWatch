@@ -38,6 +38,14 @@ body {
 }
 
 body {
+  overflow-x: hidden;
+}
+
+body:has(.landing-page) {
+  overflow-y: auto;
+}
+
+body:has(main.bg-booth-bg) {
   overflow: hidden;
 }
 

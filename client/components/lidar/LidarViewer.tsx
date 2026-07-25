@@ -300,7 +300,7 @@ export function LidarViewer() {
               {viewMode === "pov" ? "ROBOT EYES" : "ORBIT VIEW"}
             </button>
             <Link
-              href="/"
+              href="/booth"
               className="pointer-events-auto rounded-md border border-cyan-500/20 bg-black/40 px-3 py-1.5 text-cyan-300/70 backdrop-blur transition-colors hover:border-cyan-400/50 hover:text-cyan-200"
             >
               &larr; BOOTH
