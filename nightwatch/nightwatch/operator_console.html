@@ -416,7 +416,7 @@
           <button class="primary cruise-only" onclick="approachNearest()"><span data-i18n="action.nearest">接近最近的人</span> <kbd>N</kbd></button>
           <button onclick="act('stop_follow')"><span data-i18n="action.stopFollow">停止跟随</span></button>
           <button class="danger" onclick="act('stop')"><span data-i18n="action.stopNav">停止导航</span></button>
-          <a class="button" href="http://localhost:3000/lidar" target="_blank"><span data-i18n="action.lidar">三维地图</span> <kbd>L</kbd></a>
+          <a class="button" href="http://127.0.0.1:3000/lidar"><span data-i18n="action.lidar">三维地图 / Bedroom 标定</span> <kbd>L</kbd></a>
           <a class="button" href="__NIGHTWATCH_FORM_URL__" target="_blank"><span data-i18n="action.form">休息问卷</span></a>
         </div>
       </section>
@@ -530,7 +530,7 @@
       'action.nearest': '接近最近的人',
       'action.stopFollow': '停止跟随',
       'action.stopNav': '停止导航',
-      'action.lidar': '三维地图',
+      'action.lidar': '三维地图 / Bedroom 标定',
       'action.form': '休息问卷',
       'mission.heading': '任务模式 / MISSION',
       'mission.exploration': '探索模式',
@@ -704,7 +704,7 @@
       'action.nearest': 'Approach nearest person',
       'action.stopFollow': 'Stop following',
       'action.stopNav': 'Stop navigation',
-      'action.lidar': '3D lidar map',
+      'action.lidar': '3D map / Bedroom',
       'action.form': 'Rest form',
       'mission.heading': 'MISSION MODE',
       'mission.exploration': 'Exploration',
@@ -1122,7 +1122,7 @@
     else if (key === 'm') setControl(statusSnapshot.control_mode === 'manual' ? 'autonomous' : 'manual');
     else if (key === 'f') act('scan_now');
     else if (key === 'n') approachNearest();
-    else if (key === 'l') window.open('http://localhost:3000/lidar', '_blank');
+    else if (key === 'l') window.location.href = 'http://127.0.0.1:3000/lidar';
     else if (key in actionMap) act(actionMap[key]);
   });
   window.addEventListener('keyup', event => {

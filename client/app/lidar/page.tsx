@@ -3,8 +3,9 @@ import type { Metadata } from "next";
 import { LidarViewer } from "@/components/lidar/LidarViewer";
 
 export const metadata: Metadata = {
-  title: "Night Watch | Live Map",
-  description: "Real-time LIDAR point cloud streamed from the Go2 scout.",
+  title: "守夜犬 Night Watch | 三维雷达地图与 Bedroom 标定",
+  description:
+    "实时显示 Go2 激光雷达点云、累计地图和机器人位姿，并标定全空间唯一 Bedroom。",
 };
 
 export default function LidarPage() {

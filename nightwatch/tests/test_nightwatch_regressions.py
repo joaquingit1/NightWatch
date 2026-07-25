@@ -3861,7 +3861,8 @@ def test_operator_sleep_area_action_and_button_are_wired() -> None:
         "args": {},
     }
     # The upgraded page exposes the unique Bedroom map and automatic flow.
-    assert "http://localhost:3000/lidar" in _OPERATOR_HTML
+    assert "http://127.0.0.1:3000/lidar" in _OPERATOR_HTML
+    assert "Bedroom 标定" in _OPERATOR_HTML
     assert "接近最近的人" in _OPERATOR_HTML
     assert "标记 BEDROOM" not in _OPERATOR_HTML  # belongs to the map page
 

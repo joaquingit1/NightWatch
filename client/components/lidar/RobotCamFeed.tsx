@@ -10,7 +10,17 @@ const RETRY_MS = 2500;
  * reliably fire load events for multipart/x-mixed-replace images (see
  * VideoFeed.tsx), so assume signal until an error proves otherwise and
  * reconnect on error with a cache-busting query param. */
-export function RobotCamFeed({ className = "" }: { className?: string }) {
+export function RobotCamFeed({
+  className = "",
+  title = "ROBOT CAM",
+  noSignalLabel = "NO SIGNAL · RETRYING",
+  alt = "Robot first-person camera",
+}: {
+  className?: string;
+  title?: string;
+  noSignalLabel?: string;
+  alt?: string;
+}) {
   const [src, setSrc] = useState(`${API_BASE}/video_feed/robot`);
   const [hasSignal, setHasSignal] = useState(true);
   const retryTimer = useRef<number | undefined>(undefined);
@@ -36,7 +46,7 @@ export function RobotCamFeed({ className = "" }: { className?: string }) {
     >
       <div className="flex items-center justify-between border-b border-cyan-500/15 px-2.5 py-1">
         <span className="text-[10px] tracking-widest text-cyan-300/70">
-          ROBOT CAM
+          {title}
         </span>
         <span
           className={`h-1.5 w-1.5 rounded-full ${
@@ -48,7 +58,7 @@ export function RobotCamFeed({ className = "" }: { className?: string }) {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src}
-          alt="Robot first-person camera"
+          alt={alt}
           className="h-full w-full object-cover"
           onLoad={() => setHasSignal(true)}
           onError={handleError}
@@ -56,7 +66,7 @@ export function RobotCamFeed({ className = "" }: { className?: string }) {
         {!hasSignal && (
           <div className="absolute inset-0 flex items-center justify-center bg-[#04060c]/90">
             <span className="text-[10px] tracking-widest text-cyan-300/40">
-              NO SIGNAL · RETRYING
+              {noSignalLabel}
             </span>
           </div>
         )}

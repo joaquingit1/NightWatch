@@ -14,7 +14,7 @@ const TRAIL_MIN_STEP_M = 0.05;
 const POV_EYE_HEIGHT = 0.45;
 const POV_LOOK_HEIGHT = 0.35;
 
-export type ViewMode = "orbit" | "pov";
+export type ViewMode = "orbit" | "top" | "pov";
 
 export interface WorldPosition {
   x: number;
@@ -28,9 +28,12 @@ export interface LidarScene {
   updateScan(frame: CloudFrame): void;
   updatePose(pose: PoseMessage): void;
   setBedroom(position: WorldPosition | null): void;
+  setBedroomDraft(position: WorldPosition | null): void;
   pickGround(clientX: number, clientY: number): WorldPosition | null;
   getRobotPose(): WorldPosition | null;
   setViewMode(mode: ViewMode): void;
+  resetView(): void;
+  focusRobot(): boolean;
   getFps(): number;
   dispose(): void;
 }
@@ -137,6 +140,26 @@ function makeGlowTexture(): THREE.Texture {
   gradient.addColorStop(1, "rgba(0, 60, 120, 0)");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function makeLabelTexture(label: string): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "rgba(4, 6, 12, 0.88)";
+  ctx.fillRect(8, 8, 496, 112);
+  ctx.strokeStyle = "#f472b6";
+  ctx.lineWidth = 8;
+  ctx.strokeRect(8, 8, 496, 112);
+  ctx.fillStyle = "#fce7f3";
+  ctx.font = "700 54px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, 256, 67);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
@@ -270,6 +293,48 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
   const bedroomRing = new THREE.Mesh(bedroomRingGeometry, bedroomRingMaterial);
   bedroomRing.position.z = 0.035;
   bedroomGroup.add(bedroomRing);
+  const bedroomLabelTexture = makeLabelTexture("BEDROOM");
+  const bedroomLabelMaterial = new THREE.SpriteMaterial({
+    map: bedroomLabelTexture,
+    transparent: true,
+    depthTest: false,
+  });
+  const bedroomLabel = new THREE.Sprite(bedroomLabelMaterial);
+  bedroomLabel.position.z = 0.72;
+  bedroomLabel.scale.set(1.7, 0.425, 1);
+  bedroomGroup.add(bedroomLabel);
+
+  // A draft marker previews a manual pick without replacing the persisted
+  // Bedroom until the operator explicitly confirms.
+  const bedroomDraftGroup = new THREE.Group();
+  bedroomDraftGroup.visible = false;
+  worldGroup.add(bedroomDraftGroup);
+  const bedroomDraftGeometry = new THREE.ConeGeometry(0.16, 0.48, 16);
+  bedroomDraftGeometry.rotateX(Math.PI / 2);
+  const bedroomDraftMaterial = new THREE.MeshBasicMaterial({
+    color: 0xfacc15,
+    wireframe: true,
+  });
+  const bedroomDraftCone = new THREE.Mesh(
+    bedroomDraftGeometry,
+    bedroomDraftMaterial
+  );
+  bedroomDraftCone.position.z = 0.3;
+  bedroomDraftGroup.add(bedroomDraftCone);
+  const bedroomDraftRingGeometry = new THREE.RingGeometry(0.32, 0.4, 48);
+  const bedroomDraftRingMaterial = new THREE.MeshBasicMaterial({
+    color: 0xfde047,
+    transparent: true,
+    opacity: 0.9,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const bedroomDraftRing = new THREE.Mesh(
+    bedroomDraftRingGeometry,
+    bedroomDraftRingMaterial
+  );
+  bedroomDraftRing.position.z = 0.03;
+  bedroomDraftGroup.add(bedroomDraftRing);
 
   // --- trail ---
   const trailPositions = new Float32Array(TRAIL_CAPACITY * 3);
@@ -342,12 +407,14 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
   const poseCurrent = { x: 0, y: 0, z: 0, yaw: 0 };
   let hasPose = false;
   let hasFittedCamera = false;
+  let latestCloud: { positions: Float32Array; count: number } | null = null;
 
   // --- view mode ---
   let viewMode: ViewMode = "orbit";
   const savedOrbit = {
     position: new THREE.Vector3(),
     target: new THREE.Vector3(),
+    valid: false,
   };
   const povEye = new THREE.Vector3();
   const povLook = new THREE.Vector3();
@@ -389,6 +456,27 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
       center.y + distance * Math.sin(elevation),
       center.z + distance * Math.cos(elevation) * Math.sin(Math.PI / 4)
     );
+    camera.up.set(0, 1, 0);
+    controls.enableRotate = true;
+    controls.update();
+  }
+
+  function rememberOrbit(): void {
+    if (viewMode !== "orbit") return;
+    savedOrbit.position.copy(camera.position);
+    savedOrbit.target.copy(controls.target);
+    savedOrbit.valid = true;
+  }
+
+  function restoreOrbit(): void {
+    camera.up.set(0, 1, 0);
+    controls.enableRotate = true;
+    if (savedOrbit.valid) {
+      camera.position.copy(savedOrbit.position);
+      controls.target.copy(savedOrbit.target);
+    } else if (latestCloud) {
+      fitCameraToCloud(latestCloud.positions, latestCloud.count);
+    }
     controls.update();
   }
 
@@ -437,6 +525,8 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
     const pulse = 1 + 0.25 * Math.sin(elapsed * 3);
     ring.scale.setScalar(pulse);
     ringMaterial.opacity = 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(elapsed * 3));
+    bedroomRing.scale.setScalar(1 + 0.08 * Math.sin(elapsed * 2.4));
+    bedroomDraftRing.scale.setScalar(1 + 0.12 * Math.sin(elapsed * 4));
 
     if (viewMode === "pov" && hasPose) {
       povEye.set(poseCurrent.x, poseCurrent.y, poseCurrent.z + POV_EYE_HEIGHT);
@@ -484,6 +574,7 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
   return {
     updateCloud(frame: CloudFrame): void {
       const count = updateLayer(mapLayer, pointsMaterial, frame, MAX_POINTS);
+      latestCloud = { positions: frame.positions, count };
       if (!hasFittedCamera && count > 0) {
         hasFittedCamera = true;
         fitCameraToCloud(frame.positions, count);
@@ -497,6 +588,9 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
         frame,
         MAX_POINTS
       );
+      if (!latestCloud && count > 0) {
+        latestCloud = { positions: frame.positions, count };
+      }
       if (!hasFittedCamera && count > 0) {
         hasFittedCamera = true;
         fitCameraToCloud(frame.positions, count);
@@ -509,20 +603,28 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
 
     setViewMode(mode: ViewMode): void {
       if (mode === viewMode) return;
-      viewMode = mode;
+      rememberOrbit();
       if (mode === "pov") {
-        savedOrbit.position.copy(camera.position);
-        savedOrbit.target.copy(controls.target);
         controls.enabled = false;
         controls.autoRotate = false;
         robotGroup.visible = false;
+      } else if (mode === "top") {
+        robotGroup.visible = true;
+        controls.enabled = true;
+        controls.autoRotate = false;
+        controls.enableRotate = false;
+        const target = controls.target.clone();
+        const distance = Math.max(8, camera.position.distanceTo(target));
+        camera.up.set(0, 0, -1);
+        camera.position.set(target.x, target.y + distance, target.z + 0.001);
+        camera.lookAt(target);
+        controls.update();
       } else {
         robotGroup.visible = true;
-        camera.position.copy(savedOrbit.position);
-        controls.target.copy(savedOrbit.target);
         controls.enabled = true;
-        controls.update();
+        restoreOrbit();
       }
+      viewMode = mode;
     },
 
     updatePose(pose: PoseMessage): void {
@@ -544,6 +646,13 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
       }
     },
 
+    setBedroomDraft(position: WorldPosition | null): void {
+      bedroomDraftGroup.visible = position !== null;
+      if (position) {
+        bedroomDraftGroup.position.set(position.x, position.y, position.z);
+      }
+    },
+
     pickGround(clientX: number, clientY: number): WorldPosition | null {
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return null;
@@ -559,6 +668,43 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
       return hasPose
         ? { x: poseTarget.x, y: poseTarget.y, z: poseTarget.z }
         : null;
+    },
+
+    resetView(): void {
+      if (!latestCloud) return;
+      if (viewMode !== "orbit") {
+        viewMode = "orbit";
+        robotGroup.visible = true;
+        controls.enabled = true;
+      }
+      fitCameraToCloud(latestCloud.positions, latestCloud.count);
+      savedOrbit.position.copy(camera.position);
+      savedOrbit.target.copy(controls.target);
+      savedOrbit.valid = true;
+    },
+
+    focusRobot(): boolean {
+      if (!hasPose) return false;
+      if (viewMode !== "orbit") {
+        viewMode = "orbit";
+        robotGroup.visible = true;
+        controls.enabled = true;
+      }
+      camera.up.set(0, 1, 0);
+      controls.enableRotate = true;
+      const target = new THREE.Vector3(
+        poseTarget.x,
+        poseTarget.y,
+        poseTarget.z
+      );
+      worldGroup.localToWorld(target);
+      controls.target.copy(target);
+      camera.position.set(target.x + 4, target.y + 3, target.z + 4);
+      controls.update();
+      savedOrbit.position.copy(camera.position);
+      savedOrbit.target.copy(controls.target);
+      savedOrbit.valid = true;
+      return true;
     },
 
     getFps(): number {
@@ -578,6 +724,8 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
       ringGeometry.dispose();
       bedroomSphereGeometry.dispose();
       bedroomRingGeometry.dispose();
+      bedroomDraftGeometry.dispose();
+      bedroomDraftRingGeometry.dispose();
       grid.geometry.dispose();
       pointsMaterial.dispose();
       premapMaterial.dispose();
@@ -587,9 +735,13 @@ export function createLidarScene(canvas: HTMLCanvasElement): LidarScene {
       ringMaterial.dispose();
       bedroomMaterial.dispose();
       bedroomRingMaterial.dispose();
+      bedroomLabelMaterial.dispose();
+      bedroomDraftMaterial.dispose();
+      bedroomDraftRingMaterial.dispose();
       glowMaterial.dispose();
       gridMaterial.dispose();
       glowTexture.dispose();
+      bedroomLabelTexture.dispose();
       renderer.dispose();
     },
   };
