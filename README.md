@@ -1,275 +1,506 @@
 # 守夜犬 Night Watch
 
-**每个 AI 都想让你更努力。它想让你休息。**
-_Every AI makes you work more. This one makes you stop._
+![守夜犬封面 / Night Watch cover](./docs/images/cover_picture.png)
 
-Night Watch is an autonomous Unitree Go2 that patrols a venue, watches faces for
-signs of fatigue, invites tired people to rest through a QR/NFC questionnaire,
-escorts whoever accepts to a marked sleeping area, and logs the nap.
+> **每个 AI 都想让你更努力。它想让你休息。**
+>
+> **Every AI makes you work more. This one makes you stop.**
 
-Built in 72 hours for [AdventureX 2026](https://adventurex.org) · Theme:
-**Reverse** · `#adventurex2026`
+守夜犬是一套面向 Unitree Go2 的疲劳关怀原型。它在场地中探索和巡逻，通过本地视觉服务评估持续的疲劳风险，在风险信号可靠时礼貌靠近，并通过二维码或 NFC 问卷询问访客是否需要引导。只有访客明确提出请求后，机器人闭环才会尝试将其护送到已标记的休息区。
 
----
+Night Watch is a fatigue-care prototype built around a Unitree Go2. It explores and patrols a venue, uses a local vision service to assess sustained fatigue risk, approaches politely when the evidence is reliable, and asks through a QR or NFC form whether the visitor wants guidance. The robot loop attempts an escort to a marked rest area only after the visitor explicitly requests it.
 
-## The loop / 运行闭环
+当前实现可以登记到达休息区的事件，并在展台界面显示唤醒检查倒计时。自动轮巡、物品变化监测、非接触式呼吸趋势估计和自动唤醒阶梯仍属于后续方向，不是当前演示能力，也不能被表述为医疗或无人值守安全功能。
 
-1. **Patrol.** The dog explores the venue on its own with A\* navigation over a
-   saved venue map, respecting operator-drawn focus and keep-out areas.
-2. **Analyse.** A YOLOv8-Face + MediaPipe pipeline scores fatigue (EAR, MAR,
-   PERCLOS, head pose) on every frame. In Sleep Analysis mode the dog can also
-   stop at a safe boundary, lower its rear to aim the camera upward, and run a
-   bounded 3-9 second sleep scan before resuming its route.
-3. **Invite.** Sustained evidence from one anonymous track (minimum confidence,
-   quality, observation time, consecutive windows, per-person cooldown) or a
-   single operator press of **START INTAKE** makes the dog approach, speak an
-   invitation, and open a signed, expiring QR/NFC intake session.
-4. **Consent.** The visitor scans the code and answers the questionnaire on
-   their own phone. Nothing moves the robot until a submission is bound to that
-   active session.
-5. **Escort.** `escort_to_sleeping_area` takes an uninterruptible priority-60
-   behaviour lease, walks the person to the nearest known sleeping area,
-   announces arrival, and releases.
-6. **Log.** The arrival is written to the rest ledger and shown on the booth
-   screen with a wake-check countdown.
+The current implementation can register arrival at the rest area and show a visible wake-check countdown on the booth console. Automated sleeper rounds, belongings-change monitoring, contactless breathing trends, and an automatic wake ladder remain future work. They are not current demo capabilities and must not be presented as medical or unattended safety features.
+
+为 [AdventureX 2026](https://adventurex.org) 构建 · 主题：**Reverse** · `#adventurex2026`
+
+Built for [AdventureX 2026](https://adventurex.org) · Theme: **Reverse** · `#adventurex2026`
+
+> 想先了解产品理念、人文关怀和访客体验，请阅读
+>
+> Read the product story, human-centered principles, and visitor experience first:
+>
+> [《守夜犬：产品故事》 / Night Watch: Product Story](PRODUCT_STORY.md)
 
 ---
 
-## Architecture and ports / 架构与端口
+## 目录 / Contents
 
-| Process | Path | Port | Role |
-| --- | --- | --- | --- |
-| Booth client (Next.js) | `client/` | 3000 | `/` booth wall, `/lidar` map operator surface, `/first-person` full-screen robot camera, `/form` intake questionnaire |
-| Policy API (FastAPI) | `server/` | 8000 | Camera capture, live scoring, rest ledger, zones, intake sessions, robot bridge |
-| Fatigue model (FastAPI) | `fatigue_fastapi_service/` | 8001 | YOLOv8-Face + MediaPipe detection over WebSocket (`/v1/streams/detect`) |
-| Robot process (DimensionalOS) | `nightwatch/` | 5555 | `dimos run nightwatch.scout`; operator console at `/operator`, camera at `/video_feed/camera` |
-| MCP skill server | inside the robot process | 9990 | `POST /mcp`; how the policy server calls `tag_area_here`, `escort_to_sleeping_area`, mode changes, speech |
-| Map streamer | inside the robot process | 8010 | `ws://127.0.0.1:8010/ws/map` point cloud + odometry, relayed by the server as `/ws/lidar` |
-| Insta360 bridge (optional) | `insta360_bridge/` | 5556 | MJPEG from the 360 camera when `CAMERA_SOURCE=insta360` |
+- [当前实现与能力边界 / Current implementation and boundaries](#当前实现与能力边界--current-implementation-and-boundaries)
+- [当前体验闭环 / Current experience loop](#当前体验闭环--current-experience-loop)
+- [页面入口 / Application pages](#页面入口--application-pages)
+- [疲劳风险如何计算 / How fatigue risk is calculated](#疲劳风险如何计算--how-fatigue-risk-is-calculated)
+- [系统架构 / System architecture](#系统架构--system-architecture)
+- [技术栈 / Technology](#技术栈--technology)
+- [数据、隐私与安全边界 / Data, privacy, and safety boundaries](#数据隐私与安全边界--data-privacy-and-safety-boundaries)
+- [本地开发 / Local development](#本地开发--local-development)
+- [Go2 集成模式 / Integrated Go2 mode](#go2-集成模式--integrated-go2-mode)
+- [主要接口 / Selected API endpoints](#主要接口--selected-api-endpoints)
+- [验证与测试 / Verification and tests](#验证与测试--verification-and-tests)
+- [更多文档 / Further documentation](#更多文档--further-documentation)
 
-```text
-Go2 camera (:5555) -> policy API (:8000) -> fatigue model (:8001)
-       ^                    |                       |
-       |                    +-- booth UI (:3000) <--+
-       +-- MCP skills (:9990)          ^
-                                       |
-   map streamer (:8010) --- /ws/lidar -+
+---
 
-phone -> Tencent Cloud host (nginx, public /form)
-             |  reverse SSH tunnel, remote loopback :18020
-             +-> booth policy API (:8000) /api/form/*
+## 当前实现与能力边界 / Current implementation and boundaries
+
+为了避免把路线图写成已经完成的功能，下面按实际状态区分当前能力。
+
+To avoid presenting the roadmap as finished functionality, the capabilities below are separated by their current status.
+
+| 状态 / Status | 中文 | English |
+| --- | --- | --- |
+| **代码已接通 / Implemented in software** | 多人脸跟踪、RestScore、置信度与质量门控；展台、问卷和三维地图页面；Go2 状态与控制桥；持续疲劳风险触发接近；问卷明确请求后护送至唯一 `Bedroom`；到达登记与唤醒检查倒计时。 | Multi-face tracking, RestScore, confidence and quality gates; booth, intake, and 3D map pages; Go2 status and control bridge; approach after sustained fatigue risk; escort to the single `Bedroom` after an explicit form request; arrival registration and a wake-check countdown. |
+| **依赖现场配置 / Requires field configuration** | 真实 Go2 巡逻与护送、可靠定位和避障、休息区标定、机器人局域网、DimensionalOS 环境，以及机器人 Agent 和部分视觉能力所需的云端 API 配置。 | Physical Go2 patrol and escort, reliable localization and obstacle avoidance, rest-area calibration, the robot LAN, a DimensionalOS environment, and cloud API configuration used by the robot agent and some vision capabilities. |
+| **尚未实现 / Not implemented** | 多人睡眠区自动轮巡、物品状态变化提醒、呼吸趋势估计、自动唤醒阶梯，以及无人值守的睡眠安全监护。 | Automated rounds for multiple sleepers, belongings-change alerts, breathing-trend estimation, an automatic wake ladder, and unattended sleep-safety monitoring. |
+
+这是一套研究与现场演示原型，不是医疗诊断设备，也不能替代现场人员、急救流程或个人健康判断。
+
+This is a research and field-demo prototype. It is not a medical diagnostic device and cannot replace on-site staff, first aid, or personal health judgment.
+
+---
+
+## 当前体验闭环 / Current experience loop
+
+```mermaid
+flowchart LR
+    A["探索与巡逻<br/>Explore and patrol"] --> B["持续疲劳观察<br/>Sustained fatigue observation"]
+    B --> C{"信号、质量与注视门槛通过？<br/>Evidence, quality, and attention gates pass?"}
+    C -- "否 / No" --> B
+    C -- "是 / Yes" --> D["接近并邀请填写问卷<br/>Approach and offer the form"]
+    D --> E{"访客请求引导？<br/>Visitor requests guidance?"}
+    E -- "否或超时 / No or timeout" --> F["告别、后退并恢复<br/>Farewell, retreat, and resume"]
+    E -- "是 / Yes" --> G["护送到 Bedroom<br/>Escort to Bedroom"]
+    G --> H["登记到达与检查倒计时<br/>Register arrival and check countdown"]
+    H --> F
 ```
 
-The cloud host serves the public questionnaire page and proxies
-`/api/form/schema` and `/api/form/responses` back to the booth machine through a
-reverse SSH tunnel. Schema and submission both have to reach the booth process:
-the active interaction, the signed token, and the pending robot response only
-exist there, so a cloud-only form could never bind a visitor to the dog standing
-in front of them.
+当前桥接逻辑不会因为单帧高分立即采取动作。它要求同一匿名轨迹在最短观察时间内连续达到分数、置信度和画面质量阈值，同时要求访客正面关注摄像头，并应用每人冷却时间。通过门控后，机器人先执行 `potential_detected` 接近协议，再给访客三分钟通过二维码或 NFC 回答问卷。
+
+The current bridge never acts on a single high-scoring frame. It requires consecutive windows from the same anonymous track to pass score, confidence, image-quality, minimum-observation-time, direct-attention, and per-person cooldown gates. Once those gates pass, the robot first runs the `potential_detected` approach protocol and then gives the visitor three minutes to answer through QR or NFC.
+
+问卷只询问访客当前是否精神，以及是否需要引导。只有回答“有点累”且明确选择需要引导时，系统才调用 `escort_to_sleeping_area`。拒绝、超时、机器人离线、保持状态、定位不可靠或没有可用 `Bedroom` 都会阻止护送。
+
+The form asks only how alert the visitor feels and whether guidance is wanted. The system calls `escort_to_sleeping_area` only when the visitor reports being tired and explicitly requests guidance. A refusal, timeout, offline robot, active hold, unreliable localization, or missing `Bedroom` prevents the escort.
 
 ---
 
-## Running it / 启动
+## 页面入口 / Application pages
 
-Booth only (webcam, no robot calls):
+启动客户端和策略 API 后，可以访问以下页面。
 
-```sh
+Once the client and policy API are running, the following pages are available.
+
+| 地址 / URL | 中文 | English |
+| --- | --- | --- |
+| `http://localhost:3000/` | 双语产品主页 | Bilingual product landing page |
+| `http://localhost:3000/booth` | 实时疲劳分析、思考流、引导队列、路线和 care ledger | Live fatigue analysis, thought stream, escort queue, route, and care ledger |
+| `http://localhost:3000/form` | 手机端休息问卷；也支持带 `?s=<session_id>` 的固定二维码 | Mobile rest intake; also supports fixed QR URLs with `?s=<session_id>` |
+| `http://localhost:3000/lidar` | 三维地图、机器人视角和唯一 `Bedroom` 标定 | 3D map, robot-eye view, and single-`Bedroom` calibration |
+| `http://127.0.0.1:5555/operator` | Go2 双语操作台；只有机器人栈运行时可用 | Bilingual Go2 operator workbench; available only while the robot stack is running |
+
+![守夜犬产品主页 / Night Watch landing page](./docs/images/landing-home.png)
+
+---
+
+## 疲劳风险如何计算 / How fatigue risk is calculated
+
+疲劳服务通过 YOLOv8-Face 检测和跟踪人脸，再使用 MediaPipe Face Landmarker 提取面部几何信息。每个 WebSocket 连接维护独立的时间窗口、匿名 `track_id` 和中性头部姿态校准。
+
+The fatigue service detects and tracks faces with YOLOv8-Face, then extracts facial geometry with MediaPipe Face Landmarker. Each WebSocket connection maintains its own temporal window, anonymous `track_id` values, and neutral head-pose calibration.
+
+| 信号 / Signal | 当前用途 / Current use |
+| --- | --- |
+| **EAR、闭眼时长、PERCLOS、眨眼时长 / EAR, eye-closure duration, PERCLOS, blink duration** | 判断持续闭眼和时间窗口内的闭眼比例；用于 RestScore 和解释信息。 / Detect sustained eye closure and the closed-eye proportion over time; used in RestScore and explanations. |
+| **MAR、哈欠时长与次数 / MAR, yawn duration and count** | 判断持续张口和哈欠事件；用于 RestScore。 / Detect sustained mouth opening and yawn events; used in RestScore. |
+| **相对头部俯仰与点头 / Relative head pitch and nods** | 基于个人中性姿态识别持续低头和点头；用于 RestScore。 / Detect sustained head-down posture and nods relative to a personal neutral pose; used in RestScore. |
+| **头部朝向和视线 / Head orientation and gaze** | 判断注意力偏移，以及访客是否正面关注摄像头；后者是机器人自动接近门槛之一。 / Detect attention shifts and whether the visitor is looking toward the camera; direct attention is one gate for automatic approach. |
+| **检测置信度和信号质量 / Detection confidence and signal quality** | 独立于分数，用于在脸部过小、模糊或缺少关键点时选择不行动。 / Kept separate from the score so the system can abstain when a face is too small, blurred, or missing landmarks. |
+
+当前 RestScore 的基础部分由闭眼、哈欠和 PERCLOS 按 `50% / 20% / 30%` 融合，再加入持续低头和点头分量，最后限制在 `0–100`。代码还输出基于头部姿态变化的 movement entropy 和会话时长，但它们当前不进入 RestScore 主公式。
+
+The current RestScore combines eye closure, yawning, and PERCLOS at `50% / 20% / 30%`, then adds head-down and nod components before clamping the result to `0–100`. The service also exposes head-pose movement entropy and elapsed session time, but they do not currently contribute to the main RestScore formula.
+
+当前在线疲劳服务没有接入身体骨架的 neck–torso slump，也没有呼吸估计。不要把头部俯仰显示解释为完整身体姿态或医学结论。
+
+The live fatigue service does not currently include body-skeleton neck–torso slump or breathing estimation. Do not interpret the displayed head pitch as full-body posture or as a medical conclusion.
+
+详细协议和配置见 [实时疲劳检测服务说明 / Fatigue service guide](fatigue_fastapi_service/README.md)。
+
+See the [fatigue service guide](fatigue_fastapi_service/README.md) for the full protocol and configuration.
+
+---
+
+## 系统架构 / System architecture
+
+```mermaid
+flowchart TB
+    Camera["摄像头输入<br/>Webcam · Insta360 · Go2 camera"] --> API["策略 API :8000<br/>Policy API"]
+    API --> Fatigue["本地疲劳服务 :8001<br/>Local fatigue service"]
+    Fatigue --> API
+    API --> Client["Next.js :3000<br/>Landing · Booth · Form · LiDAR"]
+    Client --> API
+
+    API --> Ledger["内存 Care Ledger<br/>In-memory care ledger"]
+    API --> Intake["SQLite 问卷库<br/>SQLite intake database"]
+    API --> Audit["疲劳评估 JSONL<br/>Assessment JSONL"]
+
+    API --> Operator["Go2 操作台 :5555<br/>Go2 operator"]
+    API --> MCP["DimensionalOS MCP :9990<br/>Robot skills"]
+    MCP --> Go2["Unitree Go2"]
+    Go2 --> Map["地图流 :8010<br/>Map stream"]
+    Map --> API
+
+    Cloud["配置的云端模型<br/>Configured cloud models"] --> Agent["Agent 与视觉语言模块<br/>Agent and VL modules"]
+    Agent --> MCP
+```
+
+三个用户空间服务可以独立运行：
+
+The three user-space services can run independently:
+
+| 服务 / Service | 路径 / Path | 端口 / Port | 职责 / Role |
+| --- | --- | ---: | --- |
+| **Web 客户端 / Web client** | `client/` | 3000 | 产品主页、展台、问卷、三维地图 / Landing, booth, intake, and 3D map |
+| **策略 API / Policy API** | `server/` | 8000 | 摄像头输入、care loop、问卷、ledger、机器人桥和 UI 接口 / Camera input, care loop, intake, ledger, robot bridge, and UI APIs |
+| **疲劳检测 / Fatigue detection** | `fatigue_fastapi_service/` | 8001 | YOLOv8-Face、MediaPipe 和有状态时序推理 / YOLOv8-Face, MediaPipe, and stateful temporal inference |
+
+真实机器人模式另外运行 `nightwatch/` 中的 DimensionalOS 蓝图，提供操作台、相机、地图流和 MCP 机器人技能。
+
+Real-robot mode additionally runs the DimensionalOS blueprint in `nightwatch/`, which provides the operator workbench, camera, map stream, and MCP robot skills.
+
+---
+
+## 技术栈 / Technology
+
+| 层 / Layer | 当前实现 / Current implementation |
+| --- | --- |
+| **机器人 / Robot** | Unitree Go2 + DimensionalOS，通过 WebRTC 接收相机、LiDAR 和机器人状态。 / Unitree Go2 + DimensionalOS, with camera, LiDAR, and robot state over WebRTC. |
+| **Web** | Next.js 15、React 19、Three.js、React Three Fiber、GSAP 和 Framer Motion。 / Next.js 15, React 19, Three.js, React Three Fiber, GSAP, and Framer Motion. |
+| **API** | FastAPI、Uvicorn、WebSocket、SSE 和 MJPEG。 / FastAPI, Uvicorn, WebSocket, SSE, and MJPEG. |
+| **疲劳视觉 / Fatigue vision** | YOLOv8-Face、MediaPipe Face Landmarker、OpenCV 和可解释的时间阈值。 / YOLOv8-Face, MediaPipe Face Landmarker, OpenCV, and interpretable temporal thresholds. |
+| **机器人 Agent / Robot agent** | 当前蓝图使用通过 OpenAI-compatible endpoint 配置的 GPT‑4o；需要网络和相应凭据。 / The current blueprint uses GPT‑4o through a configured OpenAI-compatible endpoint; network access and credentials are required. |
+| **机器人视觉语言能力 / Robot vision-language capability** | 当前使用 Gemini API；疲劳检测本身不依赖它。 / Currently uses the Gemini API; the fatigue detector itself does not depend on it. |
+| **语音 / Voice** | 机器人 TTS 回退链，以及两条经过审阅的展台 WAV 提示音；可用后端取决于平台与配置。 / A robot TTS fallback chain plus two reviewed booth WAV cues; available backends depend on platform and configuration. |
+| **数据 / Data** | 问卷使用 SQLite；care ledger 在内存中；机器人桥可写 JSONL；DimensionalOS 单独持久化地图和语义/身份记忆。 / SQLite for intake, an in-memory care ledger, optional JSONL assessment audit, and separate DimensionalOS persistence for maps and semantic/identity memory. |
+
+疲劳模型在安装完成并取得模型资源后可以完全本地运行；Web、策略 API 和 stub 模式也可以离线开发。完整机器人栈当前不是“无需云端”的系统。
+
+Once installed and supplied with its model assets, fatigue inference can run entirely locally. The web app, policy API, and stub mode can also be developed offline. The complete robot stack is not currently cloud-free.
+
+---
+
+## 数据、隐私与安全边界 / Data, privacy, and safety boundaries
+
+下面描述的是当前代码行为，而不是未来的隐私承诺。
+
+The following describes current code behavior, not a future privacy promise.
+
+- **实时分析 / Live analysis**
+  当疲劳服务运行时，摄像头画面会被持续分析；当前表单没有“分析同意”问题，分析流程也没有由表单同意状态控制。自动护送仍然需要访客通过问卷明确提出引导请求。<br>
+  While the fatigue service is running, camera frames are analyzed continuously. The current form has no “consent to analysis” question, and form consent does not gate analysis. An automatic escort still requires an explicit guidance request through the form.
+
+- **匿名轨迹 / Anonymous tracks**
+  疲劳服务默认使用当前 WebSocket 会话中的匿名 `track_id`，不会在 RestScore 接口中附加姓名。展台排行榜目前也会为未登记轨迹生成匿名“访客”别名；它并不是只包含主动报名的志愿者。<br>
+  The fatigue service uses anonymous `track_id` values within the current WebSocket session and does not attach names to RestScore results. The booth leaderboard currently creates anonymous “visitor” aliases for unregistered tracks as well; it is not limited to volunteers who explicitly enrolled.
+
+- **原始画面 / Raw frames**
+  策略 API 的摄像头与疲劳路径不会把原始视频写入数据库，`/api/capture` 当前也只记录一个内存事件，不会保存提交的特征数组或原始视频。但真实机器人栈另有空间记忆和匿名人物 embedding；它们的本地持久化位置和删除方式见机器人说明。<br>
+  The policy API camera and fatigue paths do not write raw video into the database, and `/api/capture` currently records only an in-memory event rather than persisting submitted feature arrays or raw video. The real-robot stack has separate spatial memory and anonymous-person embeddings; see the robot guide for their local persistence paths and deletion behavior.
+
+- **问卷数据库 / Intake database**
+  `data/nightwatch.db` 默认保存会话 ID、交互 ID、疲劳自述、是否需要引导、处理状态和可选别名。它不会自动保存 RestScore 历史。<br>
+  By default, `data/nightwatch.db` stores session ID, interaction ID, self-reported tiredness, escort preference, handling status, and an optional alias. It does not automatically store RestScore history.
+
+- **Care ledger**
+  小睡、事件、最高分和路线计划当前保存在 `LedgerMemory` 中，策略 API 重启后会清空。它不是持久化的“整晚账本”。<br>
+  Naps, events, peak scores, and route plans currently live in `LedgerMemory` and are cleared when the policy API restarts. It is not yet a persistent all-night ledger.
+
+- **机器人审计 / Robot audit**
+  启用 `ROBOT_BRIDGE_ENABLED` 后，疲劳评估默认追加到 `data/assessments.jsonl`。记录包含匿名轨迹、边界框、分数、置信度、质量和触发因素，不包含图像本身。<br>
+  When `ROBOT_BRIDGE_ENABLED` is on, fatigue assessments are appended to `data/assessments.jsonl` by default. Records contain anonymous tracks, bounding boxes, scores, confidence, quality, and factors—not image data.
+
+任何公开或长期部署都应在启用前补充明确的现场告知、数据保留周期、删除流程、访问控制和适用地区的隐私审查。当前原型不能被当作员工绩效、医疗诊断、强制行为管理或无人值守安全系统。
+
+Before any public or long-running deployment, add clear on-site notice, retention periods, deletion procedures, access controls, and privacy review appropriate to the jurisdiction. The current prototype must not be used for employee performance evaluation, medical diagnosis, coercive behavior management, or unattended safety monitoring.
+
+---
+
+## 本地开发 / Local development
+
+### 前置条件 / Prerequisites
+
+- Node.js 20+ 与 pnpm（可使用 `corepack enable`）。<br>
+  Node.js 20+ and pnpm (`corepack enable` is supported).
+- 项目当前以 Python 3.12 测试 `server/` 和 `fatigue_fastapi_service/`。<br>
+  The project currently tests `server/` and `fatigue_fastapi_service/` with Python 3.12.
+- `server/` 可使用 [uv](https://docs.astral.sh/uv/) 或普通 `venv`。<br>
+  `server/` can use [uv](https://docs.astral.sh/uv/) or a regular `venv`.
+- 疲劳服务首次安装或首次运行可能需要联网下载 PyTorch 和模型资源。<br>
+  The first fatigue-service install or run may need internet access to download PyTorch and model assets.
+
+### Windows PowerShell：分别启动三个服务 / Windows PowerShell: run three services separately
+
+Windows 本地开发使用三个终端。这个流程不启动 DimensionalOS 或真实机器人。
+
+Windows local development uses three terminals. This flow does not start DimensionalOS or the physical robot.
+
+#### Terminal 1 — 疲劳检测 / Fatigue detection (`:8001`)
+
+只有 `SCORER_BACKEND=live` 时需要这个服务。
+
+This service is required only when `SCORER_BACKEND=live`.
+
+```powershell
+cd fatigue_fastapi_service
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+cd ..
+
+$env:FATIGUE_DEVICE = "cpu"   # 也可以使用 auto 或 cuda:0 / auto or cuda:0
+.\fatigue_fastapi_service\.venv\Scripts\python.exe -m uvicorn `
+  fatigue_fastapi_service.app.main:app `
+  --host 127.0.0.1 --port 8001 --workers 1
+```
+
+必须使用单 worker：一个推理进程只允许一条活动检测流。CPU-only PyTorch 和完整协议见 [fatigue_fastapi_service/README.md](fatigue_fastapi_service/README.md)。
+
+Use one worker: one inference process accepts only one active detection stream. See [fatigue_fastapi_service/README.md](fatigue_fastapi_service/README.md) for CPU-only PyTorch installation and the full protocol.
+
+#### Terminal 2 — 策略 API / Policy API (`:8000`)
+
+```powershell
+cd server
+uv sync
+if (-not (Test-Path .env.local)) {
+  Copy-Item .env.example .env.local
+}
+uv run uvicorn app.main:app `
+  --reload --host 127.0.0.1 --port 8000 `
+  --timeout-graceful-shutdown 3 `
+  --env-file .env.local
+```
+
+没有 `uv` 时，可以创建普通 Python 3.12 `venv`，安装 `requirements.txt`，再用该环境的 Python 运行同一条 Uvicorn 命令。
+
+Without `uv`, create a regular Python 3.12 `venv`, install `requirements.txt`, and run the same Uvicorn command with that environment’s Python.
+
+#### Terminal 3 — Web 客户端 / Web client (`:3000`)
+
+```powershell
+cd client
+if (-not (Test-Path .env.local)) {
+  Copy-Item .env.local.example .env.local
+}
+pnpm install
+pnpm dev
+```
+
+打开 `http://localhost:3000/booth` 查看实时控制台。Next.js rewrite 代理普通 API；MJPEG、SSE 和 LiDAR WebSocket 通过 `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` 直接连接策略 API。
+
+Open `http://localhost:3000/booth` for the live console. Next.js rewrites proxy ordinary API calls; MJPEG, SSE, and the LiDAR WebSocket connect directly to the policy API through `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`.
+
+### 可选 Insta360 输入 / Optional Insta360 input
+
+当 `CAMERA_SOURCE=insta360` 时，需要先在 Windows 上构建并运行专有 SDK 桥，默认端口为 `5556`。SDK 本身不随仓库分发。
+
+When `CAMERA_SOURCE=insta360`, build and run the proprietary SDK bridge on Windows first; its default port is `5556`. The SDK itself is not distributed with this repository.
+
+```powershell
+$env:INSTA360_SDK_ROOT = "C:\path\to\Windows_CameraSDK-2.1.1_MediaSDK-3.1.3"
+cd insta360_bridge
+.\build.ps1
+.\build\Release\insta360_bridge.exe --port 5556
+```
+
+详细设置见 [Insta360 bridge 说明 / Insta360 bridge guide](insta360_bridge/README.md)。
+
+See the [Insta360 bridge guide](insta360_bridge/README.md) for setup details.
+
+### 快速检查 / Quick checks
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8001/health -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:8000/api/score -UseBasicParsing
+Invoke-WebRequest http://localhost:3000/booth -UseBasicParsing
+```
+
+---
+
+## Go2 集成模式 / Integrated Go2 mode
+
+`run_integrated.sh` 是 zsh 启动器，使用 Unix 风格的 `.venv/bin/python`。它适用于 macOS 或已经准备好 zsh、Python 环境和 DimensionalOS 的 Linux/WSL 环境，不能直接复用上面 native Windows 创建的 `Scripts\python.exe` 虚拟环境。
+
+`run_integrated.sh` is a zsh launcher and expects Unix-style `.venv/bin/python` paths. It is intended for macOS or a Linux/WSL environment with zsh, Python environments, and DimensionalOS already prepared. It cannot directly reuse the `Scripts\python.exe` virtual environments created by the native Windows instructions above.
+
+### 安装用户空间依赖 / Install user-space dependencies
+
+```bash
+python3.12 -m venv fatigue_fastapi_service/.venv
+fatigue_fastapi_service/.venv/bin/python -m pip install \
+  -r fatigue_fastapi_service/requirements.txt
+
+python3.12 -m venv server/.venv
+server/.venv/bin/python -m pip install -r server/requirements.txt
+
+cd client
+pnpm install
+cd ..
+```
+
+不连接机器人时，默认使用本地摄像头、真实疲劳模型并关闭机器人调用：
+
+Without the robot, the launcher defaults to the local webcam, the real fatigue model, and disabled robot calls:
+
+```bash
 ./run_integrated.sh
 ```
 
-Full stack with the dog:
+完全使用 stub 进行界面开发：
 
-```sh
-./run_integrated.sh --with-robot --camera robot --venue legacy
+For fully stubbed UI development:
+
+```bash
+CAMERA_SOURCE=stub SCORER_BACKEND=stub DEMO_MODE=stub ./run_integrated.sh
 ```
 
-`--with-robot` switches the camera to the Go2, enables the assessment/action
-bridge, and starts `nightwatch/run_scout.sh`. `--venue NAME` selects the venue
-bundle (map, zones, home/breadcrumbs, semantic memory); `legacy` is the default
-profile and holds the existing surveyed map. On Ctrl-C the launcher exports the
-session map back into the saved premap.
+### 连接真实 Go2 / Connect the physical Go2
 
-Prerequisites, created once:
+真实机器人模式还需要：
 
-```sh
-cd client && pnpm install
-cd server && uv sync                 # or python -m venv .venv + requirements.txt
-cd fatigue_fastapi_service && python3.12 -m venv .venv && \
-  .venv/bin/pip install -r requirements.txt   # MediaPipe has no 3.13 wheels
+Real-robot mode additionally requires:
+
+- 加入 Go2 局域网，并确认机器人可达且电量适合现场测试。<br>
+  Join the Go2 LAN and confirm that the robot is reachable and sufficiently charged for field testing.
+- 准备 sibling `dimos/` checkout，以及名为 `dimos` 的 Conda 环境或显式 `DIMOS_BIN`。<br>
+  Prepare the sibling `dimos/` checkout and either a Conda environment named `dimos` or an explicit `DIMOS_BIN`.
+- 通过 `robot.env` 或当前 shell 配置机器人 Agent 和 Gemini 所需的 API endpoint 与凭据。<br>
+  Configure the API endpoints and credentials required by the robot agent and Gemini through `robot.env` or the current shell.
+- 在三维地图中确认唯一的 `Bedroom`；没有可用目的地时，护送会被拒绝。<br>
+  Confirm the single `Bedroom` in the 3D map; escorts are refused when no usable destination exists.
+
+单独启动机器人：
+
+Start the robot separately:
+
+```bash
+./nightwatch/run_scout.sh
 ```
 
-**The Mac must be joined to the robot's Wi-Fi to control the dog.** Without the
-robot, `/lidar` is empty because nothing publishes on `:8010`. Serve the saved
-premap instead so the venue still renders:
+或者让集成启动器同时启动机器人：
 
-```sh
-dimos/.venv/bin/python scripts/serve_saved_map.py
+Or let the integrated launcher start it:
+
+```bash
+./run_integrated.sh --with-robot
 ```
 
-It speaks the same wire protocol as the real `MapStreamer` and replays the last
-accepted `world -> map` alignment, so operator zones land where the robot last
-had them. `run_scout.sh` stops it automatically before the hardware streamer
-starts. `scripts/fake_map_stream.py` is the synthetic equivalent for UI work.
+`--with-robot` 默认选择 Go2 摄像头、启用 assessment/action bridge，并启动 scout 蓝图。可以使用 `--camera webcam`、`--camera insta360` 或其他受支持来源覆盖摄像头。
 
----
+`--with-robot` selects the Go2 camera, enables the assessment/action bridge, and starts the scout blueprint by default. Use `--camera webcam`, `--camera insta360`, or another supported source to override the camera.
 
-## Marking a sleeping area / 标记休息区
+启动器读取当前 shell 环境，但不会自动加载 `server/.env.local`。可配置项和默认值见 [`server/.env.example`](server/.env.example)。机器人操作、地图、持久化和安全边界见 [Go2 scout 说明 / Go2 scout guide](nightwatch/README.md)。
 
-There are four ways to declare where people may nap, and they all converge on a
-single `areas` row in the robot's world model, which is the only thing
-`escort_to_sleeping_area` reads:
+The launcher reads the current shell environment but does not automatically load `server/.env.local`. See [`server/.env.example`](server/.env.example) for configurable values and defaults. See the [Go2 scout guide](nightwatch/README.md) for robot operation, maps, persistence, and safety boundaries.
 
-1. **Robot self-tagging.** During patrol the world model votes on what it is
-   looking at and promotes a confident area to `sleeping_area` on its own.
-2. **`tag_area_here`.** The **MARK SLEEP AREA HERE** button on `/lidar` calls
-   this skill through MCP with `{"name": "sleeping_area"}`, tagging the dog's
-   current pose.
-3. **A `sleeping` polygon drawn on `/lidar`.** Unlike `keep_in` / `keep_out`,
-   this is not a movement constraint: the robot side turns the polygon's
-   centroid into a navigable area.
-4. **AprilTag id 2.** Physical markers are stable manual anchors (0 =
-   checkpoint, 1 = rest, 2 = sleep). Seeing tag 2 writes the sleeping area at a
-   safe approach pose rather than at the marker itself.
+### 公访问卷 / Public intake
 
-Human-authored areas (2, 3, 4) are marked `protected`. Autonomous vote
-resolution keeps accumulating evidence but never overwrites an operator's
-decision. Multiple sleeping areas are supported on purpose: the escort picks the
-nearest reachable one by path cost.
+根 README 不固定某一台公网服务器。将 HTTPS 问卷地址通过环境变量传给机器人操作台：
 
----
+The root README does not pin the project to one public server. Pass the HTTPS intake URL to the robot workbench through an environment variable:
 
-## Operator console / 操作台
-
-`http://localhost:5555/operator`, bilingual, designed to be usable without
-scrolling on the booth screen.
-
-- **Operating mode**, one authoritative state machine on the robot side:
-  **Autonomous** (free exploration), **Sleep Analysis** (patrol plus fatigue
-  scans and the escalation policy), **Manual Override** (`M`). Manual is
-  latched and immediate; only safety may override it, and velocity is cleared
-  within 500 ms on key release, browser blur, or disconnect.
-- **Emergency stop**, always visible, bound to `Space`.
-- **Manual driving**: `W`/`S` forward and back, `A`/`D` turn, `Q`/`E` strafe,
-  with a fast gear.
-- **Voice panel**: six preset lines (greeting, invite to rest, prescribe a nap,
-  escort start, arrival, farewell) plus a free-text field that speaks anything
-  typed.
-- **START INTAKE**: speaks the invitation and opens a QR intake session bound to
-  the current interaction.
-- **AUTO ESCORT**: operator consent switch, **off by default**. While it is on,
-  an incoming questionnaire submission dispatches the escort without a second
-  press. It lives on the server, so it stays settable while the robot is
-  offline, and Manual Override cancels an armed auto-escort in flight.
-- Posture and expression actions (stand, lie down and hold, sit, wave, play bow,
-  wiggle, paw scrape), `scan_now` for an immediate look-up scan, approach
-  nearest person, stop follow, stop navigation, set/return home.
-- Live camera with analysis overlay, behaviour owner, battery, map phase,
-  navigation state, camera age, semantic areas, and remembered people.
-
-The booth page at `:3000` mirrors the operator-relevant subset: mode, map phase,
-hold reason, AUTO ESCORT, SHOW QR, lie down and stand.
-
----
-
-## Configuration
-
-`server/.env.example` documents every server knob: camera source, scorer
-backend, CORS (loopback plus RFC1918 only), robot URLs, escalation thresholds
-(`ROBOT_INTERVENE_SCORE`, `ROBOT_ESCORT_SCORE`, minimum confidence, quality,
-observation seconds, consecutive windows, per-person cooldown), the LiDAR relay
-upstream, the intake database path, and `INTAKE_SIGNING_SECRET`, which must be
-the same private value on the booth and on any form proxy.
-
-`nightwatch/run_scout.sh` sets the venue-scoped `NIGHTWATCH_*` paths for the
-map, zones, keep-out, home, breadcrumbs, relocalization state, and semantic
-memory. `NIGHTWATCH_PREMAP=off` forces live-map-only navigation.
-
-The robot can stay offline for frontend and model work: `/api/robot/status`
-reports the disconnected state and no motion calls are attempted.
-
----
-
-## Testing / 测试
-
-```sh
-cd server && uv run pytest tests -q
-cd nightwatch && ../dimos/.venv/bin/python -m pytest tests -q
-cd client && pnpm exec tsc --noEmit
+```bash
+NIGHTWATCH_PUBLIC_FORM_URL=https://<your-domain>/form \
+  ./run_integrated.sh --with-robot
 ```
 
-- `server/tests/` covers the zone store, intake QR binding, form binding, CORS
-  config, the robot bridge, live scorer states, ledger policy, and web
-  performance paths.
-- `nightwatch/tests/` covers mode control, manual operator arbitration, and the
-  behaviour regression suite. It needs the `dimos` virtualenv, not
-  `nightwatch/.venv`.
-- `fatigue_fastapi_service/tests/` holds the offline verification test.
-- `nightwatch/HARDWARE-VALIDATION.md` is the supervised acceptance sequence that
-  automated tests cannot replace. Run it only with a person on the physical
-  emergency stop.
+腾讯云部署、受限公开接口和可选 SSH 反向同步见 [腾讯云问卷部署说明](deploy/tencent/README.md)。同步密钥存在时，`run_integrated.sh` 会自动启动隧道；隧道中断不会阻止云端保存，但不会自动补发离线期间的提交。
+
+See the [Tencent Cloud intake deployment guide](deploy/tencent/README.md) for deployment, restricted public routes, and optional SSH reverse synchronization. When the sync keys exist, `run_integrated.sh` starts the tunnel automatically. A tunnel outage does not prevent cloud persistence, but submissions made during the outage are not replayed automatically.
 
 ---
 
-## Known limitations / operational gotchas
+## 主要接口 / Selected API endpoints
 
-- **One Wi-Fi card, two networks.** Controlling the dog means joining the
-  robot's Wi-Fi, which takes the Mac off the internet and drops the reverse SSH
-  tunnel to the cloud questionnaire. Robot control and the public form are
-  effectively mutually exclusive on a single laptop.
-- **Battery floor.** Go2 firmware refuses motion below roughly 10% state of
-  charge. Start field runs above 20%; at 5% the stack stops exploring and
-  retraces its breadcrumb route home.
-- **TTS latency.** The speech chain is kokoro to edge-tts to the local `say`
-  command. Kokoro sounds best but synthesis is slow on a loaded machine, so the
-  booth also ships two reviewed WAV cues and `say` remains the reliable
-  fallback.
-- **The ledger is in-memory.** `server/app/services/ledger_memory.py` resets on
-  every server restart. Only intake responses are persisted, in SQLite at
-  `data/nightwatch.db`.
-- **QR and NFC point at the cloud.** The stickers encode an ordinary HTTPS URL
-  ending in `/form` on the Tencent host (no Web NFC API involved), so they only
-  work while that host is up and the tunnel is connected. Without the tunnel the
-  booth still works at `http://localhost:3000/form`.
-- **Maps are venue-scoped and explicit.** Venue selection is a launch flag, not
-  a guess. Two visually similar corridors loading the wrong map is an unsafe
-  failure mode.
-- **macOS is experimental** for DimensionalOS Go2 support. Keep Go2 LAN latency
-  under 10 ms with no packet loss and do not run a second camera client outside
-  the stack.
+这是主要接口列表，而不是完整 OpenAPI 参考。策略 API 运行后，可在 `http://127.0.0.1:8000/docs` 查看 HTTP 接口。
+
+This is a selected endpoint list, not the complete OpenAPI reference. Once the policy API is running, its HTTP API is available at `http://127.0.0.1:8000/docs`.
+
+| 接口 / Endpoint | 方法 / Method | 用途 / Purpose |
+| --- | --- | --- |
+| `/video_feed/pov` | GET | 当前摄像头原始 MJPEG / Raw MJPEG from the selected camera |
+| `/video_feed/annotated` | GET | 疲劳标注 MJPEG / Fatigue-annotated MJPEG |
+| `/video_feed/robot` | GET | Go2 第一视角 MJPEG 代理 / Go2 first-person MJPEG proxy |
+| `/text_stream/thoughts` | GET | 策略事件 SSE / Policy-event SSE |
+| `/ws/lidar` | WebSocket | 三维点云和机器人位姿中继 / 3D point-cloud and robot-pose relay |
+| `/api/score` | GET | 最新多人疲劳结果 / Latest multi-person fatigue result |
+| `/api/audio/{cue_id}` | GET | 经过审阅的展台 WAV / Reviewed booth WAV cue |
+| `/api/plan` | GET | 展台路线计划与 ETA / Booth route plan and ETAs |
+| `/api/ledger` | GET | 当前内存中的 care ledger / Current in-memory care ledger |
+| `/api/leaderboard` | GET | 当前会话最高 RestScore / Current-session peak RestScores |
+| `/api/form/schema` | GET | 问卷、会话和当前交互 ID / Form, session, and active interaction ID |
+| `/api/form/responses` | POST | 提交休息问卷 / Submit rest intake |
+| `/api/form/responses/latest` | GET | 最近问卷记录 / Latest intake records |
+| `/api/form/responses/pending-escort` | GET | 待处理引导请求 / Pending escort requests |
+| `/api/form/responses/{id}` | PATCH | 确认、完成或拒绝请求 / Acknowledge, complete, or decline a request |
+| `/api/robot/status` | GET | 机器人、行为、地图和桥状态 / Robot, behavior, map, and bridge status |
+| `/api/robot/action` | POST | 白名单姿态动作：Lie down / Stand / Allow-listed posture actions: Lie down / Stand |
+| `/api/robot/fatigue-auto-takeover` | PUT | 设置手动模式下的疲劳自动接管 / Configure fatigue auto-takeover in manual mode |
+| `/api/robot/approach-nearest` | POST | 操作员触发接近最近的人 / Operator-triggered nearest-person approach |
+| `/api/robot/cancel-interaction` | POST | 取消当前交互 / Cancel the active interaction |
+| `/api/robot/bedroom` | GET, PUT | 读取或覆盖唯一 `Bedroom` / Read or replace the single `Bedroom` |
+| `/api/adopt` | POST | 旧版领养/别名接口 / Legacy adoption and alias endpoint |
+| `/api/capture` | POST | 旧版采集事件接口；当前不持久化 payload / Legacy capture-event endpoint; payload is not currently persisted |
+| `/api/outcome` | POST | 登记醒后反馈 / Record a post-rest outcome |
+
+当配置了 `INTAKE_OPERATOR_KEY` 时，问卷状态修改需要 `X-Intake-Operator-Key`。未配置时，本地开发接口不会要求该 header。
+
+When `INTAKE_OPERATOR_KEY` is configured, intake status changes require `X-Intake-Operator-Key`. Without it, the local development endpoint does not require that header.
 
 ---
 
-## Repository layout
+## 验证与测试 / Verification and tests
 
-```text
-client/                  Next.js booth UI, lidar viewer, intake form
-server/                  FastAPI policy API, robot bridge, zone/intake stores
-fatigue_fastapi_service/ YOLOv8-Face + MediaPipe fatigue model service
-nightwatch/              DimensionalOS Go2 package (scout, escort, world model,
-                         operator console) and its tests
-insta360_bridge/         Optional C++ MJPEG bridge for the Insta360 camera
-scripts/                 Offline map server, fake map stream, form-sync tunnel
-deploy/tencent/          Nginx config and notes for the public form host
-prds/                    Phase PRDs
+服务端和疲劳服务的测试依赖分别列在各自的 `requirements-dev.txt` 中。
+
+Server and fatigue-service test dependencies are listed in their respective `requirements-dev.txt` files.
+
+```bash
+server/.venv/bin/python -m pip install -r server/requirements-dev.txt
+server/.venv/bin/python -m pytest -q server/tests
+
+fatigue_fastapi_service/.venv/bin/python -m pip install \
+  -r fatigue_fastapi_service/requirements-dev.txt
+fatigue_fastapi_service/.venv/bin/python -m pytest -q \
+  fatigue_fastapi_service/tests
+
+cd client
+pnpm build
 ```
 
-Design documents worth reading before changing behaviour: `AGENTS.md` (repo
-invariants), `nightwatch/LESSONS-2026-07-24.md`, `nightwatch/BRIDGE.md` (MCP
-contract), `nightwatch/README.md`, `PRD.md`, and
-`SLEEPINESS-PIPELINE-TDD.md`.
+机器人回归测试依赖 sibling DimensionalOS 环境；请使用 [Go2 scout 说明中的验证命令](nightwatch/README.md#verification)。
+
+Robot regression tests depend on the sibling DimensionalOS environment; use the [verification commands in the Go2 scout guide](nightwatch/README.md#verification).
 
 ---
 
-## Privacy
+## 更多文档 / Further documentation
 
-- Analysis consent is required before any recorded session.
-- Raw video is stored only with a separate opt-in.
-- People who do not accept are never identified or named on screen.
-- The public questionnaire only reaches the robot through a signed, expiring,
-  session-bound token.
+| 文档 / Document | 内容 / Contents |
+| --- | --- |
+| [产品故事 / Product story](PRODUCT_STORY.md) | 产品理念、体验、人文边界和长期愿景 / Product principles, experience, human boundaries, and long-term vision |
+| [Go2 scout](nightwatch/README.md) | 机器人启动、操作台、地图、记忆和平台边界 / Robot startup, operator workbench, maps, memory, and platform boundaries |
+| [机器人桥接契约 / Robot bridge contract](nightwatch/BRIDGE.md) | 相机、状态、assessment 和 MCP 调用约定 / Camera, status, assessment, and MCP call contracts |
+| [疲劳检测服务 / Fatigue service](fatigue_fastapi_service/README.md) | WebSocket 协议、模型配置和限制 / WebSocket protocol, model configuration, and limitations |
+| [Insta360 bridge](insta360_bridge/README.md) | Windows SDK 桥构建和相机连接 / Windows SDK bridge build and camera connection |
+| [操作台 PRD / Operator workbench PRD](prds/P11-operator-workbench-v2.zh-CN.md) | 探索/巡航、人工控制、QR/NFC 和 Bedroom 行为 / Explore/cruise, manual control, QR/NFC, and Bedroom behavior |
+| [腾讯云问卷部署 / Tencent intake deployment](deploy/tencent/README.md) | 公访问卷、Nginx、systemd 和反向同步 / Public intake, Nginx, systemd, and reverse synchronization |
 
 ---
 
-## License
+## 许可证 / License
 
-TBD.
+本项目尚未选择或发布开源许可证。在许可证明确之前，请不要假定代码、模型、图片或其他素材可以被再分发。
+
+No open-source license has been selected or published yet. Until a license is provided, do not assume that the code, models, images, or other assets may be redistributed.
