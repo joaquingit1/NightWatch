@@ -1,0 +1,1418 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>守夜犬工作台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Courier New", Courier, monospace;
+      --paper: #f2efe7;
+      --paper-deep: #e6e0d3;
+      --ink: #090909;
+      --cobalt: #173ed1;
+      --orange: #ff4b13;
+      --acid: #f2e84b;
+      --mint: #9fe2c2;
+      --muted: #5f5a51;
+      --danger: #e13123;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper-deep); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(rgba(9, 9, 9, .055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(9, 9, 9, .055) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .28;
+      z-index: 20;
+      background-image:
+        repeating-linear-gradient(8deg, transparent 0 9px, rgba(9, 9, 9, .025) 9px 10px),
+        repeating-linear-gradient(97deg, transparent 0 13px, rgba(9, 9, 9, .02) 13px 14px);
+      mix-blend-mode: multiply;
+    }
+    main { width: min(1540px, 100%); margin: auto; padding: 20px 22px 34px; }
+    header, .row, .split, .mode, .video-head, .settings { display: flex; gap: 9px; align-items: center; }
+    header {
+      position: relative;
+      justify-content: space-between;
+      min-height: 148px;
+      margin-bottom: 20px;
+      padding: 18px 22px 16px;
+      overflow: hidden;
+      color: var(--paper);
+      background: var(--cobalt);
+      border: 4px solid var(--ink);
+      box-shadow: 9px 9px 0 var(--ink);
+    }
+    header::after {
+      content: "CONTROL / CONTROL / CONTROL /";
+      position: absolute;
+      right: -28px;
+      bottom: -9px;
+      color: var(--orange);
+      font: 900 2.2rem/1 Impact, Haettenschweiler, "Arial Black", sans-serif;
+      letter-spacing: -.04em;
+      transform: rotate(-5deg);
+      white-space: nowrap;
+    }
+    header > div { position: relative; z-index: 1; }
+    .header-index {
+      margin-bottom: 8px;
+      font-size: .72rem;
+      font-weight: 900;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      font: 900 clamp(3.4rem, 8vw, 7.8rem)/.72 Impact, Haettenschweiler, "Arial Black", sans-serif;
+      letter-spacing: -.07em;
+      text-transform: uppercase;
+    }
+    header .hint {
+      margin-top: 17px;
+      color: var(--paper);
+      font-weight: 900;
+      letter-spacing: .18em;
+    }
+    h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      font: 900 1rem/1 "Arial Black", Arial, sans-serif;
+      letter-spacing: -.02em;
+      text-transform: uppercase;
+    }
+    h2::before {
+      content: "■";
+      color: var(--orange);
+      font-size: .9em;
+    }
+    .live {
+      position: relative;
+      z-index: 2;
+      align-self: flex-start;
+      padding: 9px 12px;
+      color: var(--ink);
+      background: var(--mint);
+      border: 3px solid var(--ink);
+      box-shadow: 4px 4px 0 var(--ink);
+      font-size: .74rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .header-controls {
+      position: relative;
+      z-index: 3;
+      display: grid;
+      justify-items: end;
+      gap: 10px;
+      align-self: stretch;
+    }
+    .language-switch { display: flex; gap: 6px; }
+    .language-switch button {
+      min-height: 34px;
+      padding: 5px 9px;
+      background: var(--paper);
+      font-family: "Courier New", monospace;
+      font-size: .7rem;
+    }
+    .language-switch button.active { background: var(--orange); color: var(--ink); }
+    .view-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .help-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      padding: 7px 11px;
+      color: var(--ink);
+      background: var(--acid);
+      border: 3px solid var(--ink);
+      box-shadow: 4px 4px 0 var(--ink);
+      font: 900 .72rem "Arial Black", Arial, sans-serif;
+      text-decoration: none;
+      text-transform: uppercase;
+    }
+    .help-link:hover { background: var(--orange); transform: translate(-1px, -1px); }
+    .video-head {
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin: -14px -14px 12px;
+      padding: 10px 12px;
+      border-bottom: 4px solid var(--ink);
+      background: var(--acid);
+    }
+    .video-head h2 { margin: 0; }
+    .video-head > .row { flex-wrap: wrap; justify-content: flex-end; }
+    .vision-stage {
+      position: relative;
+      background: var(--ink);
+      border: 4px solid var(--ink);
+      overflow: hidden;
+      min-height: clamp(320px, 48vw, 690px);
+      isolation: isolate;
+    }
+    .vision-stage::before,
+    .vision-stage::after {
+      content: "";
+      position: absolute;
+      z-index: 12;
+      width: 22px;
+      height: 22px;
+      pointer-events: none;
+    }
+    .vision-stage::before { top: 9px; left: 9px; border-top: 3px solid var(--orange); border-left: 3px solid var(--orange); }
+    .vision-stage::after { right: 9px; bottom: 9px; border-right: 3px solid var(--orange); border-bottom: 3px solid var(--orange); }
+    .vision-stage img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      border: 0;
+      object-fit: contain;
+      background: #04060c;
+    }
+    .overlay {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      z-index: 9;
+      max-width: calc(100% - 24px);
+      padding: 8px 10px;
+      background: var(--orange);
+      color: var(--ink);
+      border: 3px solid var(--ink);
+      box-shadow: 4px 4px 0 var(--ink);
+      font-size: .74rem;
+      font-weight: 900;
+      display: none;
+    }
+    .layout { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(390px, .58fr); gap: 20px; }
+    .stack { display: grid; gap: 18px; align-content: start; }
+    .panel {
+      position: relative;
+      background: rgba(242, 239, 231, .96);
+      border: 4px solid var(--ink);
+      padding: 14px;
+      box-shadow: 7px 7px 0 var(--ink);
+    }
+    .stack > .panel:nth-child(even) { background: var(--paper-deep); }
+    .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; border: 3px solid var(--ink); }
+    .metric {
+      min-width: 0;
+      padding: 8px 9px;
+      background: var(--paper);
+      border-right: 2px solid var(--ink);
+      border-bottom: 2px solid var(--ink);
+    }
+    .metric:nth-child(5n) { border-right: 0; }
+    .metric:nth-last-child(-n + 5) { border-bottom: 0; }
+    .metric span { display: block; color: var(--muted); font-size: .62rem; font-weight: 900; text-transform: uppercase; }
+    .metric b { display: block; overflow: hidden; text-overflow: ellipsis; font-size: .82rem; white-space: nowrap; }
+    button, a.button {
+      min-height: 42px;
+      border: 3px solid var(--ink);
+      border-radius: 0;
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 3px 3px 0 var(--ink);
+      font-family: "Arial Black", Arial, sans-serif;
+      font-size: .74rem;
+      font-weight: 900;
+      letter-spacing: -.01em;
+      cursor: pointer;
+      padding: 8px 10px;
+      text-decoration: none;
+      text-align: center;
+      text-transform: uppercase;
+      transition: transform 90ms ease, box-shadow 90ms ease, background 90ms ease;
+    }
+    button:hover, a.button:hover { background: var(--acid); transform: translate(-1px, -1px); box-shadow: 5px 5px 0 var(--ink); }
+    button:active, a.button:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink); }
+    button.active { background: var(--cobalt); color: white; }
+    button.primary { background: var(--orange); }
+    button.danger { background: var(--danger); color: white; }
+    button.warn { background: var(--acid); }
+    button:disabled { cursor: not-allowed; opacity: .34; filter: grayscale(1); transform: none; box-shadow: 2px 2px 0 var(--ink); }
+    .mode { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 9px; }
+    .mode button { min-height: 62px; }
+    button small { font-family: "Courier New", monospace; font-weight: 700; }
+    .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .move { min-height: 58px; touch-action: none; user-select: none; }
+    .actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+    kbd {
+      float: right;
+      padding: 1px 5px;
+      color: var(--paper);
+      background: var(--ink);
+      border: 0;
+      border-radius: 0;
+      font: 700 .64rem "Courier New", monospace;
+    }
+    .settings { flex-wrap: wrap; font-size: .78rem; color: var(--muted); font-weight: 900; }
+    input[type=number] {
+      width: 78px;
+      padding: 8px;
+      background: white;
+      border: 3px solid var(--ink);
+      color: var(--ink);
+      border-radius: 0;
+      font: 900 .8rem "Courier New", monospace;
+    }
+    input[type=checkbox] { width: 18px; height: 18px; }
+    #status {
+      min-height: 54px;
+      padding: 11px;
+      background: var(--acid);
+      color: var(--ink);
+      border: 3px solid var(--ink);
+      font-size: .8rem;
+      font-weight: 900;
+    }
+    .people { display: grid; gap: 6px; margin-top: 9px; }
+    .person {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      padding: 7px 9px;
+      background: white;
+      border: 2px solid var(--ink);
+      font: 700 .75rem "Courier New", monospace;
+    }
+    .score { color: var(--orange); font-weight: 900; }
+    #chat {
+      height: 170px;
+      overflow: auto;
+      white-space: pre-wrap;
+      background: var(--ink);
+      color: var(--paper);
+      border: 3px solid var(--ink);
+      padding: 10px;
+      font: .8rem/1.45 "Courier New", monospace;
+    }
+    .user { color: #86a4ff; margin-top: 6px; }
+    .robot { color: var(--acid); margin-top: 6px; }
+    form { display: flex; gap: 7px; margin-top: 7px; }
+    form input {
+      flex: 1;
+      min-width: 0;
+      padding: 10px;
+      border-radius: 0;
+      border: 3px solid var(--ink);
+      background: white;
+      color: var(--ink);
+      font: 700 16px "Courier New", monospace;
+    }
+    form input:focus { outline: 4px solid var(--orange); outline-offset: -4px; }
+    .hint { color: var(--muted); font-size: .7rem; font-weight: 700; margin-top: 8px; }
+    dialog {
+      width: min(500px, calc(100% - 28px));
+      color: var(--ink);
+      background: var(--paper);
+      border: 4px solid var(--ink);
+      border-radius: 0;
+      box-shadow: 10px 10px 0 var(--orange);
+      padding: 20px;
+    }
+    dialog::backdrop { background: rgba(23, 62, 209, .78); }
+    dialog h2 { font-size: 1.25rem; }
+    dialog p { color: var(--muted); margin: 10px 0 18px; line-height: 1.5; font-weight: 700; }
+    dialog .row { justify-content: flex-end; }
+    .safety-bar {
+      position: sticky;
+      z-index: 30;
+      bottom: 0;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(150px, .7fr);
+      gap: 8px;
+      width: min(1540px, calc(100% - 20px));
+      margin: 18px auto 0;
+      padding: 9px;
+      background: var(--paper);
+      border: 4px solid var(--ink);
+      box-shadow: 0 -7px 0 var(--ink);
+    }
+    .safety-bar button { min-height: 48px; }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(3, 1fr); }
+      .metric, .metric:nth-child(5n), .metric:nth-last-child(-n + 5) { border-right: 2px solid var(--ink); border-bottom: 2px solid var(--ink); }
+      .metric:nth-child(3n) { border-right: 0; }
+      .metric:nth-last-child(-n + 1) { border-bottom: 0; }
+    }
+    @media (max-width: 560px) {
+      main { padding: 10px 10px 24px; }
+      header { min-height: 130px; padding: 14px; box-shadow: 5px 5px 0 var(--ink); }
+      h1 { font-size: 3.5rem; }
+      header::after { font-size: 1.35rem; }
+      .header-controls { justify-items: end; max-width: 48%; }
+      .live { max-width: 100%; }
+      .help-link { font-size: .64rem; }
+      .actions { grid-template-columns: repeat(2, 1fr); }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .metric:nth-child(3n) { border-right: 2px solid var(--ink); }
+      .metric:nth-child(2n) { border-right: 0; }
+      .metric:nth-last-child(-n + 2) { border-bottom: 0; }
+      .panel { box-shadow: 4px 4px 0 var(--ink); }
+      .vision-stage { min-height: 310px; }
+      .safety-bar { grid-template-columns: repeat(3, 1fr); }
+      .safety-bar .danger { grid-column: 1 / -1; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <p class="header-index" data-i18n="header.index">OPERATOR SYSTEM / UNIT 01 / 夜间行动终端</p>
+      <h1 data-i18n="header.brand">守夜犬</h1>
+      <p class="hint" data-i18n="header.subtitle">NIGHT WATCH / OPERATOR CONSOLE</p>
+    </div>
+    <div class="header-controls">
+      <div class="language-switch" role="group" aria-label="语言" data-i18n-aria-label="language.label">
+        <button id="languageZh" type="button" onclick="setLanguage('zh')" aria-pressed="true">中文</button>
+        <button id="languageEn" type="button" onclick="setLanguage('en')" aria-pressed="false">EN</button>
+      </div>
+      <span class="live" id="linkState">● 正在连接机器人</span>
+      <nav class="view-links" aria-label="Operator screens" data-i18n-aria-label="header.screens">
+        <a class="help-link" href="http://127.0.0.1:3000/lidar" onclick="openLidarPage(event)" data-i18n="header.lidar">三维雷达 →</a>
+        <a class="help-link" href="http://127.0.0.1:3000/first-person" onclick="openFirstPersonPage(event)" data-i18n="header.firstPerson">第一人称视角 →</a>
+        <a class="help-link" href="/operator/help" data-i18n="header.help">工作台使用说明 →</a>
+      </nav>
+    </div>
+  </header>
+  <div class="layout">
+    <div class="stack">
+      <section class="panel">
+        <div class="video-head">
+          <h2 data-i18n="video.cameraHeading">机器人视野 / 摄像头</h2>
+          <div class="row">
+            <button id="analysisMode" class="active" onclick="setVideoMode('analysis')" data-i18n="video.analysis">分析</button>
+            <button id="rawMode" onclick="setVideoMode('raw')" data-i18n="video.raw">原始</button>
+          </div>
+        </div>
+        <div class="vision-stage">
+          <img id="robotVideo" alt="机器人相机视频" data-i18n-alt="video.alt">
+          <div id="videoOverlay" class="overlay"></div>
+        </div>
+      </section>
+      <section class="panel">
+        <h2 data-i18n="status.summaryHeading">机器人实时状态 / LIVE ROBOT STATUS</h2>
+        <div class="metrics">
+          <div class="metric"><span>运行模式 / MODE</span><b id="mission">—</b></div>
+          <div class="metric"><span>模式纪元 / EPOCH</span><b id="control">—</b></div>
+          <div class="metric"><span data-i18n="metric.behavior">当前行为</span><b id="behavior">—</b></div>
+          <div class="metric"><span data-i18n="metric.owner">运动所有者</span><b id="owner">—</b></div>
+          <div class="metric"><span data-i18n="metric.fatigue">疲劳检测</span><b id="fatigue">—</b></div>
+          <div class="metric"><span data-i18n="metric.interaction">交互阶段</span><b id="interaction">—</b></div>
+          <div class="metric"><span data-i18n="metric.battery">电量</span><b id="battery">—</b></div>
+          <div class="metric"><span data-i18n="metric.navigation">导航</span><b id="navigation">—</b></div>
+          <div class="metric"><span data-i18n="metric.map">地图</span><b id="mapPhase">—</b></div>
+          <div class="metric"><span data-i18n="metric.cameraAge">相机延迟</span><b id="cameraAge">—</b></div>
+        </div>
+        <div id="people" class="people"><div class="person"><span data-i18n="people.none">暂无人脸指标</span></div></div>
+      </section>
+      <section class="panel">
+        <h2 data-i18n="motion.heading">基础运动 / 手动移动</h2>
+        <div class="controls">
+          <button class="move" data-move="left"><span data-i18n="move.left">左移</span> <kbd>Q</kbd></button>
+          <button class="move" data-move="forward"><span data-i18n="move.forward">前进</span> <kbd>W</kbd></button>
+          <button class="move" data-move="right"><span data-i18n="move.right">右移</span> <kbd>E</kbd></button>
+          <button class="move" data-move="turnLeft"><span data-i18n="move.turnLeft">左转</span> <kbd>A</kbd></button>
+          <button class="danger" onclick="emergencyStop()"><span data-i18n="move.emergency">紧急停止</span> <kbd>Space</kbd></button>
+          <button class="move" data-move="turnRight"><span data-i18n="move.turnRight">右转</span> <kbd>D</kbd></button>
+          <span></span>
+          <button class="move" data-move="backward"><span data-i18n="move.backward">后退</span> <kbd>S</kbd></button>
+          <span></span>
+        </div>
+        <p class="hint" data-i18n="motion.hint">Shift 为受限快速档，Ctrl 为慢速精细档。控制报文中断超过 500 ms，机器人端自动停止。</p>
+      </section>
+      <section class="panel">
+        <h2 data-i18n="actions.heading">姿态与任务动作 / 动作矩阵</h2>
+        <div class="actions">
+          <button onclick="act('stand_up')"><span data-i18n="action.stand">站起</span> <kbd>1</kbd></button>
+          <button onclick="act('lie_down')"><span data-i18n="action.lie">趴下保持</span> <kbd>2</kbd></button>
+          <button onclick="act('sit')"><span data-i18n="action.sit">坐下</span> <kbd>3</kbd></button>
+          <button onclick="act('wave')"><span data-i18n="action.wave">招手</span> <kbd>4</kbd></button>
+          <button onclick="act('stretch')"><span data-i18n="action.stretch">玩耍鞠躬</span> <kbd>5</kbd></button>
+          <button onclick="act('tail_wag')"><span data-i18n="action.tail">摇屁股</span> <kbd>6</kbd></button>
+          <button onclick="act('happy')"><span data-i18n="action.happy">开心动作</span> <kbd>7</kbd></button>
+          <button onclick="act('paw')"><span data-i18n="action.paw">扒地</span> <kbd>8</kbd></button>
+          <button class="primary cruise-only" onclick="act('scan_now')"><span data-i18n="action.scan">立即仰头检测</span> <kbd>F</kbd></button>
+          <button class="primary cruise-only" onclick="approachNearest()"><span data-i18n="action.nearest">接近最近的人</span> <kbd>N</kbd></button>
+          <button onclick="act('stop_follow')"><span data-i18n="action.stopFollow">停止跟随</span></button>
+          <button class="danger" onclick="act('stop')"><span data-i18n="action.stopNav">停止导航</span></button>
+          <button onclick="act('sleep_area')">护送到最近休息区<br><small>Take me to the sleeping area</small></button>
+          <button id="startIntakeButton" class="primary" onclick="startIntake()">START INTAKE / 显示二维码<br><small>Speak invite + show QR</small></button>
+          <!-- Operator consent switch for public QR/NFC responses (AGENTS.md
+               invariant 14). No cruise-only class: it must be flippable in any
+               operating mode, Autonomous included. -->
+          <button id="autoEscortButton" aria-pressed="false" onclick="toggleAutoEscort()">AUTO ESCORT 自动护送<br><small id="autoEscortState">OFF 关闭</small></button>
+          <a class="button" href="__NIGHTWATCH_FORM_URL__" target="_blank"><span data-i18n="action.form">休息问卷</span></a>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>VOICE 语音</h2>
+        <div class="actions">
+          <button onclick="act('speak_greeting')">问好<br><small>Greeting</small></button>
+          <button onclick="act('speak_invite')">邀请休息<br><small>Invite to rest</small></button>
+          <button onclick="act('speak_prescribe')">建议扫码小睡<br><small>Prescribe nap</small></button>
+          <button onclick="act('speak_escort_start')">开始带路<br><small>Escort start</small></button>
+          <button onclick="act('speak_arrival')">到达休息区<br><small>Arrival</small></button>
+          <button onclick="act('speak_farewell')">道别<br><small>Farewell</small></button>
+        </div>
+        <form id="speakForm" onsubmit="speakCustom(event)">
+          <input id="speakText" maxlength="200" autocomplete="off" placeholder="自定义播报内容… / Custom line…">
+          <button class="primary" type="submit">播放<br><small>PLAY</small></button>
+        </form>
+        <p class="hint">语音入队播放，不会打断其他指令。Speech is queued and never blocks other console actions.</p>
+      </section>
+    </div>
+    <aside class="stack">
+      <section class="panel">
+        <h2>运行模式 / OPERATING MODE</h2>
+        <div class="mode">
+          <button id="modeAutonomous" onclick="setOperatingMode('autonomous')">自主探索<br><small>Autonomous</small></button>
+          <button id="modeSleep" onclick="setOperatingMode('sleep_analysis')">睡眠分析<br><small>Sleep Analysis</small></button>
+          <button id="modeManual" onclick="setOperatingMode('manual')">手动接管 <kbd>M</kbd><br><small>Manual Override</small></button>
+        </div>
+        <p class="hint">手动接管保持锁定，只有操作员明确选择另一个模式才会退出；疲劳策略不能抢走控制权。</p>
+      </section>
+      <section class="panel">
+        <h2 data-i18n="cadence.heading">巡航检测节奏 / CADENCE</h2>
+        <div class="settings">
+          <label><span>移动间隔</span> <input id="patrolInterval" type="number" min="10" max="300" step="5" value="25"> <span data-i18n="unit.seconds">秒</span></label>
+          <label><span data-i18n="cadence.scan">仰头检测</span> <input id="scanDuration" type="number" min="3" max="9" step="1" value="7"> <span data-i18n="unit.seconds">秒</span></label>
+          <button onclick="saveScanSettings()"><span data-i18n="cadence.save">保存</span></button>
+        </div>
+        <p class="hint">仅在睡眠分析模式中，默认移动 25 秒后进行最多 7 秒的后部降低仰头扫描，然后恢复姿态和路线。</p>
+      </section>
+      <section class="panel">
+        <h2 data-i18n="status.heading">命令状态 / COMMAND LOG</h2>
+        <div id="status" data-i18n="status.ready">工作台已就绪。</div>
+      </section>
+      <section class="panel">
+        <h2 data-i18n="chat.heading">机器人对话 / DIRECT LINK</h2>
+        <div id="chat"></div>
+        <form id="ask">
+          <input id="query" autocomplete="off" placeholder="告诉机器人要做什么…" data-i18n-placeholder="chat.placeholder" required>
+          <button class="primary"><span data-i18n="chat.send">发送</span></button>
+        </form>
+        <p class="hint" data-i18n="chat.hint">输入框聚焦时所有键盘控制都会禁用。</p>
+      </section>
+    </aside>
+  </div>
+</main>
+<dialog id="mapDialog">
+  <h2 data-i18n="dialog.heading">地图探索已完成</h2>
+  <p><span data-i18n="dialog.prefix">将在</span> <b id="mapCountdown">60</b> <span data-i18n="dialog.suffix">秒后自动切换到巡航模式。你也可以继续探索，等待出现新的未知区域。</span></p>
+  <div class="row">
+    <button onclick="resolveMapPrompt(true)"><span data-i18n="dialog.stay">继续探索</span></button>
+    <button class="primary" onclick="resolveMapPrompt(false)"><span data-i18n="dialog.cruise">现在开始巡航</span></button>
+  </div>
+</dialog>
+<div class="safety-bar" aria-label="Persistent operating mode and emergency controls">
+  <button class="mode-shortcut" data-operating-mode="autonomous" onclick="setOperatingMode('autonomous')">Autonomous</button>
+  <button class="mode-shortcut" data-operating-mode="sleep_analysis" onclick="setOperatingMode('sleep_analysis')">Sleep Analysis</button>
+  <button class="mode-shortcut" data-operating-mode="manual" onclick="setOperatingMode('manual')">Manual Override</button>
+  <button class="danger" onclick="emergencyStop()">EMERGENCY STOP · SPACE</button>
+</div>
+<script>
+  const API_BASE = `http://${window.location.hostname}:8000`;
+  const RAW_VIDEO = '/video_feed/camera';
+  const ANALYSIS_VIDEO = API_BASE + '/video_feed/annotated';
+  const LIDAR_ORIGIN = `http://${window.location.hostname}:3000`;
+  const statusEl = document.getElementById('status');
+  const video = document.getElementById('robotVideo');
+  const videoOverlay = document.getElementById('videoOverlay');
+  const mapDialog = document.getElementById('mapDialog');
+  const LANGUAGE_STORAGE_KEY = 'nightwatch.operator.language';
+  const translations = {
+    zh: {
+      'page.title': '守夜犬工作台',
+      'language.label': '语言',
+      'header.index': 'OPERATOR SYSTEM / UNIT 01 / 夜间行动终端',
+      'header.brand': '守夜犬',
+      'header.subtitle': 'NIGHT WATCH / OPERATOR CONSOLE',
+      'header.screens': '操作员页面',
+      'header.lidar': '三维雷达 →',
+      'header.firstPerson': '第一人称视角 →',
+      'header.help': '工作台使用说明 →',
+      'status.summaryHeading': '机器人实时状态 / LIVE ROBOT STATUS',
+      'video.heading': '机器人视野 / 摄像头 + 三维雷达',
+      'video.cameraHeading': '机器人视野 / 摄像头',
+      'video.analysis': '分析',
+      'video.raw': '原始',
+      'video.alt': '机器人相机视频',
+      'video.primaryLabel': '主画面',
+      'video.cameraPrimary': '摄像头为主',
+      'video.lidarPrimary': '雷达为主',
+      'video.cameraLabel': '摄像头',
+      'video.lidarLabel': '三维雷达',
+      'video.makeCameraPrimary': '切换为主画面',
+      'video.makeLidarPrimary': '切换为主画面',
+      'video.lidarTitle': '三维雷达地图',
+      'metric.mission': '任务模式',
+      'metric.control': '控制模式',
+      'metric.behavior': '当前行为',
+      'metric.owner': '运动所有者',
+      'metric.fatigue': '疲劳检测',
+      'metric.interaction': '交互阶段',
+      'metric.battery': '电量',
+      'metric.navigation': '导航',
+      'metric.map': '地图',
+      'metric.cameraAge': '相机延迟',
+      'people.none': '暂无人脸指标',
+      'people.noFace': '当前画面未检测到有效人脸',
+      'people.offline': '疲劳服务离线，指标已清空',
+      'people.anonymous': '匿名目标',
+      'people.fatigue': '疲劳',
+      'people.quality': '质量',
+      'motion.heading': '基础运动 / 手动移动',
+      'move.left': '左移',
+      'move.forward': '前进',
+      'move.right': '右移',
+      'move.turnLeft': '左转',
+      'move.emergency': '紧急停止',
+      'move.turnRight': '右转',
+      'move.backward': '后退',
+      'motion.hint': 'Shift 为受限快速档，Ctrl 为慢速精细档。控制报文中断超过 500 ms，机器人端自动停止。',
+      'actions.heading': '姿态与任务动作 / 动作矩阵',
+      'action.stand': '站起',
+      'action.lie': '趴下保持',
+      'action.sit': '坐下',
+      'action.wave': '招手',
+      'action.stretch': '玩耍鞠躬',
+      'action.tail': '摇屁股',
+      'action.happy': '开心动作',
+      'action.paw': '扒地',
+      'action.scan': '立即仰头检测',
+      'action.nearest': '接近最近的人',
+      'action.stopFollow': '停止跟随',
+      'action.stopNav': '停止导航',
+      'action.lidar': '三维地图 / Bedroom 标定',
+      'action.form': '休息问卷',
+      'mission.heading': '任务模式 / MISSION',
+      'mission.exploration': '探索模式',
+      'mission.explorationSub': '只建图',
+      'mission.cruise': '巡航模式',
+      'mission.cruiseSub': '检测与互动',
+      'control.heading': '控制模式 / 控制权',
+      'control.autonomous': '自主行动',
+      'control.manual': '手动接管',
+      'control.takeover': '手动巡航时允许疲劳告警自动接管',
+      'cadence.heading': '巡航检测节奏 / CADENCE',
+      'cadence.patrol': '巡航',
+      'cadence.scan': '仰头检测',
+      'cadence.save': '保存',
+      'cadence.hint': '默认自主巡航 90 秒后停下仰头检测 20 秒，只累计真实巡航运动时间。',
+      'unit.seconds': '秒',
+      'status.heading': '命令状态 / COMMAND LOG',
+      'status.ready': '工作台已就绪。',
+      'status.executing': '正在执行…',
+      'status.completed': '命令已执行。',
+      'status.operationFailed': '操作失败：{detail}',
+      'status.policyUnavailable': '策略服务不可用',
+      'status.takeoverOn': '手动疲劳自动接管已开启。',
+      'status.takeoverOff': '手动疲劳自动接管已关闭。',
+      'status.settingFailed': '设置失败：{detail}',
+      'status.approaching': '正在接近最近的人并开始后续交互。',
+      'status.manualFirst': '请先切换到手动接管。',
+      'status.manualFailed': '手动控制失败：{detail}',
+      'status.robotHold': '机器人保持：{detail}',
+      'status.robotHandling': '机器人正在处理请求…',
+      'autoEscort.on': 'ON 已开启',
+      'autoEscort.off': 'OFF 关闭',
+      'status.sent': '请求已发送。',
+      'status.sendFailed': '发送失败：{detail}',
+      'error.commandRejected': '命令被拒绝',
+      'error.requestRejected': '请求被拒绝',
+      'chat.heading': '机器人对话 / DIRECT LINK',
+      'chat.placeholder': '告诉机器人要做什么…',
+      'chat.send': '发送',
+      'chat.hint': '输入框聚焦时所有键盘控制都会禁用。',
+      'chat.you': '你',
+      'chat.robot': '机器人',
+      'dialog.heading': '地图探索已完成',
+      'dialog.prefix': '将在',
+      'dialog.suffix': '秒后自动切换到巡航模式。你也可以继续探索，等待出现新的未知区域。',
+      'dialog.stay': '继续探索',
+      'dialog.cruise': '现在开始巡航',
+      'overlay.modelOffline': '疲劳模型离线，已回退到原始视频',
+      'overlay.paused': '疲劳检测暂停：{reason}',
+      'fatigue.running': '运行',
+      'fatigue.paused': '暂停 · {reason}',
+      'fatigue.policy': '策略',
+      'fatigue.policyControl': '策略控制',
+      'link.onlineBoth': '● 机器人控制已连接 · 疲劳服务已连接',
+      'link.robotOnly': '● 机器人控制已连接 · 疲劳服务离线',
+      'link.offlinePreview': '● 离线安全预览 · 所有硬件命令已拦截',
+      'link.offline': '● 机器人控制离线',
+      'link.connecting': '● 正在连接机器人',
+      'enum.mission.cruise': '巡航',
+      'enum.mission.exploration': '探索',
+      'enum.control.manual': '手动',
+      'enum.control.autonomous': '自主',
+      'enum.behavior.hold': '保持',
+      'enum.behavior.explore': '探索',
+      'enum.behavior.patrol': '巡航',
+      'enum.behavior.observe': '观察',
+      'enum.behavior.follow': '跟随',
+      'enum.behavior.manual': '手动',
+      'enum.behavior.escort': '护送',
+      'enum.behavior.intervene': '人员交互',
+      'enum.behavior.return_home': '低电量返航',
+      'enum.behavior.explicit_task': '明确任务',
+      'enum.behavior.express': '姿态动作',
+      'enum.owner.safety': '安全系统',
+      'enum.owner.curiosity': '自主监督器',
+      'enum.owner.operator': '操作员',
+      'enum.owner.battery': '电量保护',
+      'enum.owner.person_follow': '人员跟随',
+      'enum.owner.scheduled_scan': '定时检测',
+      'enum.owner.operator_scan': '操作员检测',
+      'enum.owner.offline_console': '离线工作台',
+      'enum.owner.intervention': '人员干预',
+      'enum.owner.escort': '护送流程',
+      'enum.owner.navigation': '导航任务',
+      'enum.interaction.idle': '空闲',
+      'enum.interaction.scheduled_scan': '定时检测',
+      'enum.interaction.forced_scan': '立即检测',
+      'enum.interaction.fatigue_candidate': '疲劳候选',
+      'enum.interaction.approaching': '正在接近',
+      'enum.interaction.offering_form': '提示问卷',
+      'enum.interaction.waiting_form': '等待问卷',
+      'enum.interaction.farewell': '友好告别',
+      'enum.interaction.escorting': '正在护送',
+      'enum.interaction.arrived': '已到达',
+      'enum.interaction.retreating': '正在离开',
+      'enum.navigation.idle': '空闲',
+      'enum.navigation.following_path': '沿路径移动',
+      'enum.navigation.planning': '规划中',
+      'enum.navigation.recovery': '导航恢复中',
+      'enum.navigation.unavailable': '不可用',
+      'enum.navigation.offline': '离线',
+      'enum.map.mapped': '已完成',
+      'enum.map.exploring': '探索中',
+      'enum.map.not_ready': '未就绪',
+      'enum.map.unavailable': '不可用',
+      'pause.exploration_mode': '探索模式',
+      'pause.interaction_active': '人员交互中',
+      'pause.robot_offline': '机器人离线',
+      'pause.policy_control': '策略控制',
+      'pause.safety_hold': '安全保持',
+      'pause.operator_lying_down': '操作员要求趴下',
+      'pause.battery_unknown': '电量未知',
+      'pause.battery_low_home_unknown': '低电量且返航点未知',
+      'pause.battery_home': '低电量已返航',
+      'pause.return_home_route_blocked': '返航路线受阻',
+      'pause.sensors_not_ready': '传感器未就绪',
+      'pause.robot_not_started': '机器狗尚未启动',
+      'pause.starting': '正在启动',
+      'pause.battery_low': '电量过低',
+      'pause.curiosity_disabled': '自主监督器已关闭',
+      'pause.mission_mode_invalid': '任务模式无效',
+      'pause.return_home_retrying': '正在重试返航',
+      'pause.return_home_sensors_not_ready': '返航传感器未就绪',
+      'pause.stuck_help': '机器人受困，等待协助',
+      'pause.supervisor_error': '自主监督器异常'
+    },
+    en: {
+      'page.title': 'Night Watch Operator Console',
+      'language.label': 'Language',
+      'header.index': 'OPERATOR SYSTEM / UNIT 01 / NIGHT OPERATIONS',
+      'header.brand': 'NIGHT WATCH',
+      'header.subtitle': 'ROBOT DOG / OPERATOR CONSOLE',
+      'header.screens': 'Operator screens',
+      'header.lidar': 'LiDAR map →',
+      'header.firstPerson': 'First Person View →',
+      'header.help': 'Operator guide →',
+      'status.summaryHeading': 'LIVE ROBOT STATUS',
+      'video.heading': 'ROBOT VIEW / CAMERA + 3D LIDAR',
+      'video.cameraHeading': 'ROBOT VIEW / CAMERA',
+      'video.analysis': 'Analysis',
+      'video.raw': 'Raw',
+      'video.alt': 'Robot camera video',
+      'video.primaryLabel': 'Primary view',
+      'video.cameraPrimary': 'Camera primary',
+      'video.lidarPrimary': 'Lidar primary',
+      'video.cameraLabel': 'Camera',
+      'video.lidarLabel': '3D lidar',
+      'video.makeCameraPrimary': 'Make primary',
+      'video.makeLidarPrimary': 'Make primary',
+      'video.lidarTitle': '3D lidar map',
+      'metric.mission': 'Mission mode',
+      'metric.control': 'Control mode',
+      'metric.behavior': 'Current behavior',
+      'metric.owner': 'Motion owner',
+      'metric.fatigue': 'Fatigue detection',
+      'metric.interaction': 'Interaction stage',
+      'metric.battery': 'Battery',
+      'metric.navigation': 'Navigation',
+      'metric.map': 'Map',
+      'metric.cameraAge': 'Camera latency',
+      'people.none': 'No face metrics yet',
+      'people.noFace': 'No valid face detected in the current frame',
+      'people.offline': 'Fatigue service offline; metrics cleared',
+      'people.anonymous': 'Anonymous subject',
+      'people.fatigue': 'Fatigue',
+      'people.quality': 'Quality',
+      'motion.heading': 'MANUAL MOTION',
+      'move.left': 'Strafe left',
+      'move.forward': 'Forward',
+      'move.right': 'Strafe right',
+      'move.turnLeft': 'Turn left',
+      'move.emergency': 'Emergency stop',
+      'move.turnRight': 'Turn right',
+      'move.backward': 'Backward',
+      'motion.hint': 'Hold Shift for the bounded fast gear and Ctrl for precision. The robot stops if control packets are interrupted for more than 500 ms.',
+      'actions.heading': 'POSTURE & TASK ACTIONS / ACTION MATRIX',
+      'action.stand': 'Stand up',
+      'action.lie': 'Lie down & hold',
+      'action.sit': 'Sit',
+      'action.wave': 'Wave',
+      'action.stretch': 'Play bow',
+      'action.tail': 'Wiggle hips',
+      'action.happy': 'Happy motion',
+      'action.paw': 'Paw scrape',
+      'action.scan': 'Stop & scan now',
+      'action.nearest': 'Approach nearest person',
+      'action.stopFollow': 'Stop following',
+      'action.stopNav': 'Stop navigation',
+      'action.lidar': '3D map / Bedroom',
+      'action.form': 'Rest form',
+      'mission.heading': 'MISSION MODE',
+      'mission.exploration': 'Exploration',
+      'mission.explorationSub': 'Map building only',
+      'mission.cruise': 'Cruise',
+      'mission.cruiseSub': 'Detection & interaction',
+      'control.heading': 'CONTROL AUTHORITY',
+      'control.autonomous': 'Autonomous',
+      'control.manual': 'Manual takeover',
+      'control.takeover': 'Allow fatigue alerts to take over during manual cruise',
+      'cadence.heading': 'CRUISE SCAN CADENCE',
+      'cadence.patrol': 'Cruise',
+      'cadence.scan': 'Head-up scan',
+      'cadence.save': 'Save',
+      'cadence.hint': 'By default, autonomous cruise stops for a 20-second head-up scan after 90 seconds of actual patrol motion.',
+      'unit.seconds': 'sec',
+      'status.heading': 'COMMAND STATUS / COMMAND LOG',
+      'status.ready': 'Operator console ready.',
+      'status.executing': 'Executing…',
+      'status.completed': 'Command completed.',
+      'status.operationFailed': 'Operation failed: {detail}',
+      'status.policyUnavailable': 'Policy service unavailable',
+      'status.takeoverOn': 'Manual fatigue auto-takeover enabled.',
+      'status.takeoverOff': 'Manual fatigue auto-takeover disabled.',
+      'status.settingFailed': 'Setting failed: {detail}',
+      'status.approaching': 'Approaching the nearest person and starting the interaction.',
+      'status.manualFirst': 'Switch to manual takeover first.',
+      'status.manualFailed': 'Manual control failed: {detail}',
+      'status.robotHold': 'Robot hold: {detail}',
+      'status.robotHandling': 'Robot is processing the request…',
+      'autoEscort.on': 'ON 已开启',
+      'autoEscort.off': 'OFF 关闭',
+      'status.sent': 'Request sent.',
+      'status.sendFailed': 'Send failed: {detail}',
+      'error.commandRejected': 'Command rejected',
+      'error.requestRejected': 'Request rejected',
+      'chat.heading': 'ROBOT DIALOGUE / DIRECT LINK',
+      'chat.placeholder': 'Tell the robot what to do…',
+      'chat.send': 'Send',
+      'chat.hint': 'All keyboard controls are disabled while the input field is focused.',
+      'chat.you': 'you',
+      'chat.robot': 'robot',
+      'dialog.heading': 'Map exploration complete',
+      'dialog.prefix': 'Cruise mode will start automatically in',
+      'dialog.suffix': 'seconds. You can also keep exploring and wait for new unknown areas.',
+      'dialog.stay': 'Keep exploring',
+      'dialog.cruise': 'Start cruise now',
+      'overlay.modelOffline': 'Fatigue model offline; using the raw video feed',
+      'overlay.paused': 'Fatigue detection paused: {reason}',
+      'fatigue.running': 'Running',
+      'fatigue.paused': 'Paused · {reason}',
+      'fatigue.policy': 'Policy',
+      'fatigue.policyControl': 'Policy control',
+      'link.onlineBoth': '● Robot control connected · Fatigue service connected',
+      'link.robotOnly': '● Robot control connected · Fatigue service offline',
+      'link.offlinePreview': '● Safe offline preview · All hardware commands blocked',
+      'link.offline': '● Robot control offline',
+      'link.connecting': '● Connecting to robot',
+      'enum.mission.cruise': 'Cruise',
+      'enum.mission.exploration': 'Exploration',
+      'enum.control.manual': 'Manual',
+      'enum.control.autonomous': 'Autonomous',
+      'enum.behavior.hold': 'Hold',
+      'enum.behavior.explore': 'Explore',
+      'enum.behavior.patrol': 'Patrol',
+      'enum.behavior.observe': 'Observe',
+      'enum.behavior.follow': 'Follow',
+      'enum.behavior.manual': 'Manual',
+      'enum.behavior.escort': 'Escort',
+      'enum.behavior.intervene': 'Person interaction',
+      'enum.behavior.return_home': 'Low-battery return',
+      'enum.behavior.explicit_task': 'Explicit task',
+      'enum.behavior.express': 'Posture action',
+      'enum.owner.safety': 'Safety system',
+      'enum.owner.curiosity': 'Autonomy supervisor',
+      'enum.owner.operator': 'Operator',
+      'enum.owner.battery': 'Battery protection',
+      'enum.owner.person_follow': 'Person follow',
+      'enum.owner.scheduled_scan': 'Scheduled scan',
+      'enum.owner.operator_scan': 'Operator scan',
+      'enum.owner.offline_console': 'Offline console',
+      'enum.owner.intervention': 'Person intervention',
+      'enum.owner.escort': 'Escort flow',
+      'enum.owner.navigation': 'Navigation task',
+      'enum.interaction.idle': 'Idle',
+      'enum.interaction.scheduled_scan': 'Scheduled scan',
+      'enum.interaction.forced_scan': 'Immediate scan',
+      'enum.interaction.fatigue_candidate': 'Fatigue candidate',
+      'enum.interaction.approaching': 'Approaching',
+      'enum.interaction.offering_form': 'Offering form',
+      'enum.interaction.waiting_form': 'Waiting for form',
+      'enum.interaction.farewell': 'Friendly farewell',
+      'enum.interaction.escorting': 'Escorting',
+      'enum.interaction.arrived': 'Arrived',
+      'enum.interaction.retreating': 'Retreating',
+      'enum.navigation.idle': 'Idle',
+      'enum.navigation.following_path': 'Following path',
+      'enum.navigation.planning': 'Planning',
+      'enum.navigation.recovery': 'Navigation recovery',
+      'enum.navigation.unavailable': 'Unavailable',
+      'enum.navigation.offline': 'Offline',
+      'enum.map.mapped': 'Mapped',
+      'enum.map.exploring': 'Exploring',
+      'enum.map.not_ready': 'Not ready',
+      'enum.map.unavailable': 'Unavailable',
+      'pause.exploration_mode': 'Exploration mode',
+      'pause.interaction_active': 'Person interaction active',
+      'pause.robot_offline': 'Robot offline',
+      'pause.policy_control': 'Policy control',
+      'pause.safety_hold': 'Safety hold',
+      'pause.operator_lying_down': 'Operator requested lie-down',
+      'pause.battery_unknown': 'Battery unknown',
+      'pause.battery_low_home_unknown': 'Low battery; home unknown',
+      'pause.battery_home': 'Low battery; robot at home',
+      'pause.return_home_route_blocked': 'Return-home route blocked',
+      'pause.sensors_not_ready': 'Sensors not ready',
+      'pause.robot_not_started': 'Robot not started',
+      'pause.starting': 'Starting',
+      'pause.battery_low': 'Critically low battery',
+      'pause.curiosity_disabled': 'Autonomy supervisor disabled',
+      'pause.mission_mode_invalid': 'Invalid mission mode',
+      'pause.return_home_retrying': 'Retrying return home',
+      'pause.return_home_sensors_not_ready': 'Return-home sensors not ready',
+      'pause.stuck_help': 'Robot is stuck and needs assistance',
+      'pause.supervisor_error': 'Autonomy supervisor error'
+    }
+  };
+  let statusSnapshot = {};
+  let videoMode = 'analysis';
+  let analysisFallback = false;
+  // Epoch-based start keeps packets ordered across page reloads and old tabs.
+  let manualSequence = Date.now() * 1000;
+  let movementTimer = null;
+  let movementKeys = new Set();
+  let movementButtons = new Set();
+  let lastMovementSignature = '';
+  let movementSending = false;
+  let pendingMovement = null;
+  let serverOnline = false;
+  let mapPromptSeen = false;
+  let policyInteraction = null;
+  // Authoritative value comes from the policy server's /api/robot/status; the
+  // console never invents it (off until the server says otherwise).
+  let autoEscortEnabled = false;
+  let latestPeople = [];
+  let statusNotice = {key: 'status.ready', vars: {}};
+  let linkNotice = 'link.connecting';
+  let uiLanguage = (() => {
+    try { return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'en' ? 'en' : 'zh'; }
+    catch (_) { return 'zh'; }
+  })();
+
+  function t(key, vars = {}, fallback = key) {
+    let value = translations[uiLanguage]?.[key] ?? translations.zh[key] ?? fallback;
+    Object.entries(vars).forEach(([name, replacement]) => {
+      value = value.replaceAll(`{${name}}`, String(replacement));
+    });
+    return value;
+  }
+  function normalized(value) {
+    return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  }
+  function enumText(group, value) {
+    if (value == null || value === '') return '—';
+    return t(`enum.${group}.${normalized(value)}`, {}, String(value));
+  }
+  function pauseReason(value) {
+    if (value == null || value === '') return t('fatigue.policy');
+    return t(`pause.${normalized(value)}`, {}, String(value).replaceAll('_', ' '));
+  }
+  function setStatusKey(key, vars = {}) {
+    statusNotice = {key, vars};
+    statusEl.textContent = t(key, vars);
+  }
+  function renderPeople() {
+    const box = document.getElementById('people');
+    box.innerHTML = '';
+    if (!serverOnline) {
+      const row = document.createElement('div'); row.className = 'person';
+      const text = document.createElement('span'); text.textContent = t('people.offline');
+      row.appendChild(text); box.appendChild(row); return;
+    }
+    if (!latestPeople.length) {
+      const row = document.createElement('div'); row.className = 'person';
+      const text = document.createElement('span'); text.textContent = t('people.noFace');
+      row.appendChild(text); box.appendChild(row); return;
+    }
+    latestPeople.forEach(person => {
+      const row = document.createElement('div'); row.className = 'person';
+      const id = document.createElement('span'); id.textContent = person.person_id || t('people.anonymous');
+      const scoreEl = document.createElement('span'); scoreEl.className = 'score';
+      scoreEl.textContent = `${t('people.fatigue')} ${Number(person.score || 0).toFixed(0)}`;
+      const quality = document.createElement('span');
+      quality.textContent = `${t('people.quality')} ${Number(person.quality || person.confidence || 0).toFixed(2)}`;
+      row.append(id, scoreEl, quality); box.appendChild(row);
+    });
+  }
+  function renderAutoEscort() {
+    const button = document.getElementById('autoEscortButton');
+    if (!button) return;
+    const on = autoEscortEnabled === true;
+    button.classList.toggle('active', on);
+    button.setAttribute('aria-pressed', String(on));
+    const label = document.getElementById('autoEscortState');
+    if (label) label.textContent = t(on ? 'autoEscort.on' : 'autoEscort.off');
+  }
+  function renderStatusValues(status) {
+    renderAutoEscort();
+    if (!status || !Object.keys(status).length) return;
+    setText('mission', String(status.operating_mode || '—').replaceAll('_', ' '));
+    setText('control', status.mode_epoch);
+    setText('behavior', enumText('behavior', status.behavior));
+    setText('owner', enumText('owner', status.owner));
+    setText(
+      'fatigue',
+      status.fatigue_detection === 'enabled'
+        ? t('fatigue.running')
+        : t('fatigue.paused', {reason: pauseReason(status.fatigue_pause_reason)})
+    );
+    const interactionState = policyInteraction?.state || status.interaction_state;
+    const interactionText = enumText('interaction', interactionState);
+    setText(
+      'interaction',
+      policyInteraction?.remaining_s != null
+        ? `${interactionText} · ${Math.ceil(policyInteraction.remaining_s)}s`
+        : interactionText
+    );
+    setText('battery', status.battery_soc == null ? null : status.battery_soc + '%');
+    setText('navigation', enumText('navigation', status.navigation));
+    setText('mapPhase', enumText('map', status.map_phase));
+    setText('cameraAge', status.camera_age_ms == null ? null : Math.round(status.camera_age_ms) + ' ms');
+    videoOverlay.style.display = status.fatigue_detection === 'enabled' && !analysisFallback ? 'none' : 'block';
+    if (analysisFallback) {
+      videoOverlay.textContent = t('overlay.modelOffline');
+    } else if (status.fatigue_detection !== 'enabled') {
+      videoOverlay.textContent = t('overlay.paused', {
+        reason: pauseReason(status.fatigue_pause_reason || 'policy_control')
+      });
+    }
+    const robotConnected = status.robot_connected !== false;
+    setLinkState(
+      robotConnected
+        ? (serverOnline ? 'link.onlineBoth' : 'link.robotOnly')
+        : 'link.offlinePreview'
+    );
+  }
+  function setLinkState(key) {
+    linkNotice = key;
+    document.getElementById('linkState').textContent = t(key);
+  }
+  function setLanguage(language) {
+    uiLanguage = language === 'en' ? 'en' : 'zh';
+    try { localStorage.setItem(LANGUAGE_STORAGE_KEY, uiLanguage); } catch (_) {}
+    document.documentElement.lang = uiLanguage === 'en' ? 'en' : 'zh-CN';
+    document.title = t('page.title');
+    document.querySelectorAll('[data-i18n]').forEach(element => {
+      element.textContent = t(element.dataset.i18n, {}, element.textContent);
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
+      element.setAttribute('placeholder', t(element.dataset.i18nPlaceholder));
+    });
+    document.querySelectorAll('[data-i18n-alt]').forEach(element => {
+      element.setAttribute('alt', t(element.dataset.i18nAlt));
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(element => {
+      element.setAttribute('title', t(element.dataset.i18nTitle));
+    });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
+      element.setAttribute('aria-label', t(element.dataset.i18nAriaLabel));
+    });
+    document.getElementById('languageZh').classList.toggle('active', uiLanguage === 'zh');
+    document.getElementById('languageEn').classList.toggle('active', uiLanguage === 'en');
+    document.getElementById('languageZh').setAttribute('aria-pressed', String(uiLanguage === 'zh'));
+    document.getElementById('languageEn').setAttribute('aria-pressed', String(uiLanguage === 'en'));
+    statusEl.textContent = t(statusNotice.key, statusNotice.vars);
+    setLinkState(linkNotice);
+    renderPeople();
+    renderStatusValues(statusSnapshot);
+  }
+  function openLidarPage(event) {
+    event?.preventDefault();
+    window.location.href = `${LIDAR_ORIGIN}/lidar?lang=${uiLanguage}`;
+  }
+  function openFirstPersonPage(event) {
+    event?.preventDefault();
+    window.location.href = `${LIDAR_ORIGIN}/first-person?lang=${uiLanguage}`;
+  }
+  function setVideoMode(mode) {
+    videoMode = mode;
+    analysisFallback = false;
+    document.getElementById('analysisMode').classList.toggle('active', mode === 'analysis');
+    document.getElementById('rawMode').classList.toggle('active', mode === 'raw');
+    video.onerror = mode === 'analysis' ? () => {
+      video.onerror = null; video.src = RAW_VIDEO;
+      analysisFallback = true;
+      videoOverlay.style.display = 'block';
+      videoOverlay.textContent = t('overlay.modelOffline');
+    } : null;
+    video.src = (mode === 'analysis' ? ANALYSIS_VIDEO : RAW_VIDEO) + '?t=' + Date.now();
+  }
+  function setText(id, value) { document.getElementById(id).textContent = value == null || value === '' ? '—' : value; }
+  function line(css, text, roleKey) {
+    const div = document.createElement('div');
+    div.className = css;
+    const role = document.createElement('span');
+    role.dataset.i18n = roleKey;
+    role.textContent = t(roleKey);
+    div.append(role, document.createTextNode(' > ' + text));
+    document.getElementById('chat').appendChild(div);
+    document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+  }
+  function isTyping() {
+    const tag = document.activeElement?.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable;
+  }
+  async function command(action, args = {}) {
+    const response = await fetch('/operator/action', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action, arguments: args}),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.message || t('error.commandRejected'));
+    return data;
+  }
+  async function act(action, args = {}) {
+    setStatusKey('status.executing');
+    try {
+      await command(action, args);
+      setStatusKey('status.completed');
+    } catch (error) {
+      setStatusKey('status.operationFailed', {detail: error.message});
+    }
+  }
+  async function setOperatingMode(mode) {
+    stopMovement();
+    await act('operating_mode', {mode});
+    refreshStatus();
+  }
+  async function emergencyStop() {
+    movementKeys.clear(); movementButtons.clear(); stopMovement();
+    await act('emergency_stop');
+    refreshStatus();
+  }
+  async function saveScanSettings() {
+    await act('scan_settings', {
+      interval_s: Number(document.getElementById('patrolInterval').value),
+      duration_s: Number(document.getElementById('scanDuration').value),
+    });
+  }
+  async function approachNearest() {
+    try {
+      const response = await fetch(API_BASE + '/api/robot/approach-nearest', {method:'POST'});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || t('error.requestRejected'));
+      setStatusKey('status.approaching');
+    } catch (error) { setStatusKey('status.operationFailed', {detail: error.message}); }
+  }
+  async function startIntake() {
+    setStatusKey('status.executing');
+    try {
+      const response = await fetch(API_BASE + '/api/robot/action', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'start_intake'}),
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.message || t('error.requestRejected'));
+      }
+      // The bridge returns a human-readable confirmation; t() falls back to
+      // the literal text for keys that are not translation ids.
+      setStatusKey(data.message || 'status.completed');
+    } catch (error) {
+      setStatusKey('status.operationFailed', {detail: error.message});
+    }
+  }
+  async function toggleAutoEscort() {
+    // Explicit operator consent that makes an unbound public questionnaire
+    // response actionable (AGENTS.md invariant 14). Server state, so it is
+    // accepted in every operating mode and while the robot is offline.
+    const next = !(autoEscortEnabled === true);
+    setStatusKey('status.executing');
+    try {
+      const response = await fetch(API_BASE + '/api/robot/auto_escort', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: next}),
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.message || t('error.requestRejected'));
+      }
+      autoEscortEnabled = data.auto_escort_enabled === true;
+      renderAutoEscort();
+      setStatusKey(data.message || 'status.completed');
+    } catch (error) {
+      setStatusKey('status.operationFailed', {detail: error.message});
+    }
+  }
+  async function speakCustom(event) {
+    event.preventDefault();
+    const input = document.getElementById('speakText');
+    const text = input.value.trim();
+    if (!text) return;
+    // Speech is queued robot-side; act() reports the outcome in the command
+    // log like every other console action.
+    await act('speak_text', {text});
+    input.value = '';
+  }
+  async function resolveMapPrompt(stay) {
+    await act('map_prompt', {stay_exploring: stay});
+    mapDialog.close(); mapPromptSeen = false;
+  }
+  function movementVector() {
+    const active = new Set([...movementKeys, ...movementButtons]);
+    let x = 0, y = 0, wz = 0;
+    if (active.has('forward')) x += .45;
+    if (active.has('backward')) x -= .45;
+    if (active.has('left')) y += .4;
+    if (active.has('right')) y -= .4;
+    if (active.has('turnLeft')) wz += .7;
+    if (active.has('turnRight')) wz -= .7;
+    const boost = movementKeys.has('boost') ? 1.25 : (movementKeys.has('slow') ? .45 : 1);
+    return {x: x * boost, y: y * boost, wz: wz * boost};
+  }
+  async function publishMovement(v) {
+    if (movementSending) {
+      pendingMovement = {...v};
+      return;
+    }
+    movementSending = true;
+    manualSequence = Math.max(
+      manualSequence,
+      Number(statusSnapshot.manual_input_seq || 0)
+    ) + 1;
+    try {
+      await command('teleop', {
+        epoch: Number(statusSnapshot.mode_epoch),
+        sequence: manualSequence,
+        ...v
+      });
+    } finally {
+      movementSending = false;
+      if (pendingMovement) {
+        const pending = pendingMovement;
+        pendingMovement = null;
+        void publishMovement(pending);
+      }
+    }
+  }
+  async function sendMovement() {
+    const v = movementVector();
+    const signature = `${v.x.toFixed(3)}:${v.y.toFixed(3)}:${v.wz.toFixed(3)}`;
+    if (statusSnapshot.operating_mode !== 'manual' && signature !== '0.000:0.000:0.000') {
+      setStatusKey('status.manualFirst'); stopMovement(); return;
+    }
+    if (signature === '0.000:0.000:0.000' && signature === lastMovementSignature) return;
+    lastMovementSignature = signature;
+    try {
+      await publishMovement(v);
+    } catch (error) {
+      stopMovement(); setStatusKey('status.manualFailed', {detail: error.message});
+    }
+  }
+  function startMovement() {
+    if (!movementTimer) {
+      movementTimer = window.setInterval(() => { void sendMovement(); }, 100);
+    }
+    sendMovement();
+  }
+  function stopMovement() {
+    if (movementTimer) window.clearInterval(movementTimer);
+    movementTimer = null;
+    const wasMoving = lastMovementSignature !== '' && lastMovementSignature !== '0.000:0.000:0.000';
+    lastMovementSignature = '';
+    if (wasMoving || statusSnapshot.operating_mode === 'manual') {
+      void publishMovement({x:0, y:0, wz:0}).catch(() => {});
+    }
+  }
+  document.querySelectorAll('[data-move]').forEach(button => {
+    const name = button.dataset.move;
+    const begin = event => { event.preventDefault(); movementButtons.add(name); startMovement(); };
+    const end = event => { event.preventDefault(); movementButtons.delete(name); movementButtons.size ? sendMovement() : stopMovement(); };
+    button.addEventListener('pointerdown', begin);
+    button.addEventListener('pointerup', end);
+    button.addEventListener('pointercancel', end);
+    button.addEventListener('pointerleave', end);
+  });
+  const movementMap = {w:'forward', s:'backward', q:'left', e:'right', a:'turnLeft', d:'turnRight'};
+  const actionMap = {'1':'stand_up','2':'lie_down','3':'sit','4':'wave','5':'stretch','6':'tail_wag','7':'happy','8':'paw'};
+  window.addEventListener('keydown', event => {
+    if (isTyping()) return;
+    const key = event.key.toLowerCase();
+    if (key in movementMap) {
+      event.preventDefault(); movementKeys.add(movementMap[key]); startMovement(); return;
+    }
+    if (event.key === 'Shift') { movementKeys.add('boost'); return; }
+    if (event.key === 'Control') { movementKeys.add('slow'); return; }
+    if (event.repeat) return;
+    if (event.code === 'Space') { event.preventDefault(); emergencyStop(); }
+    else if (key === 'm') setOperatingMode(statusSnapshot.operating_mode === 'manual' ? 'autonomous' : 'manual');
+    else if (key === 'f') act('scan_now');
+    else if (key === 'n') approachNearest();
+    else if (key === 'v') openFirstPersonPage(event);
+    else if (key === 'l') openLidarPage(event);
+    else if (key in actionMap) act(actionMap[key]);
+  });
+  window.addEventListener('keyup', event => {
+    const key = event.key.toLowerCase();
+    if (key in movementMap) movementKeys.delete(movementMap[key]);
+    if (event.key === 'Shift') movementKeys.delete('boost');
+    if (event.key === 'Control') movementKeys.delete('slow');
+    movementKeys.size ? sendMovement() : stopMovement();
+  });
+  function stopManual() {
+    movementKeys.clear();
+    movementButtons.clear();
+    stopMovement();
+  }
+  window.addEventListener('blur', stopManual);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopManual();
+  });
+
+  async function refreshPolicyStatus() {
+    try {
+      const [robotResponse, scoreResponse] = await Promise.all([
+        fetch(API_BASE + '/api/robot/status', {cache:'no-store'}),
+        fetch(API_BASE + '/api/score', {cache:'no-store'}),
+      ]);
+      if (!robotResponse.ok || !scoreResponse.ok) throw new Error();
+      const robot = await robotResponse.json();
+      const score = await scoreResponse.json();
+      serverOnline = true;
+      autoEscortEnabled = robot.auto_escort_enabled === true;
+      latestPeople = Array.isArray(score.people) && score.people.length ? score.people : (score.person_id ? [score] : []);
+      renderPeople();
+      if (robot.active_interaction?.remaining_s != null) {
+        policyInteraction = {
+          state: robot.interaction_state,
+          remaining_s: robot.active_interaction.remaining_s
+        };
+      } else {
+        policyInteraction = robot.interaction_state && robot.interaction_state !== 'idle'
+          ? {state: robot.interaction_state, remaining_s: null}
+          : null;
+      }
+      renderStatusValues(statusSnapshot);
+    } catch (_) {
+      serverOnline = false;
+      // Unknown state reads as OFF: the console must never show an armed
+      // switch it cannot confirm with the policy server.
+      autoEscortEnabled = false;
+      latestPeople = [];
+      policyInteraction = null;
+      renderPeople();
+      renderStatusValues(statusSnapshot);
+    }
+  }
+  async function refreshStatus() {
+    try {
+      const response = await fetch('/operator/status', {cache:'no-store'});
+      const status = await response.json();
+      if (!response.ok) throw new Error();
+      statusSnapshot = status;
+      renderStatusValues(status);
+      document.getElementById('modeAutonomous').classList.toggle('active', status.operating_mode === 'autonomous');
+      document.getElementById('modeSleep').classList.toggle('active', status.operating_mode === 'sleep_analysis');
+      document.getElementById('modeManual').classList.toggle('active', status.operating_mode === 'manual');
+      document.querySelectorAll('.mode-shortcut').forEach(button => {
+        button.classList.toggle('active', button.dataset.operatingMode === status.operating_mode);
+      });
+      document.querySelectorAll('.move').forEach(button => button.disabled = status.operating_mode !== 'manual');
+      document.querySelectorAll('.cruise-only').forEach(button => button.disabled = status.operating_mode !== 'sleep_analysis');
+      document.getElementById('patrolInterval').value = Math.round(status.scan_interval_s || 25);
+      document.getElementById('scanDuration').value = Math.round(status.scan_duration_s || 7);
+      const prompt = status.map_completion_prompt;
+      if (prompt) {
+        document.getElementById('mapCountdown').textContent = Math.ceil(prompt.remaining_s);
+        if (!mapDialog.open && !mapPromptSeen) { mapPromptSeen = true; mapDialog.showModal(); }
+      } else if (mapDialog.open) { mapDialog.close(); mapPromptSeen = false; }
+      const robotConnected = status.robot_connected !== false;
+      document.getElementById('linkState').style.color = robotConnected ? '#090909' : '#ffffff';
+      document.getElementById('linkState').style.background = robotConnected
+        ? (serverOnline ? '#9fe2c2' : '#f2e84b')
+        : '#e13123';
+      if (!robotConnected) stopMovement();
+      if (status.hold_reason) setStatusKey('status.robotHold', {detail: pauseReason(status.hold_reason)});
+    } catch (_) {
+      setLinkState('link.offline');
+      document.getElementById('linkState').style.color = '#ffffff';
+      document.getElementById('linkState').style.background = '#e13123';
+      stopMovement();
+    }
+  }
+  const events = new EventSource('/text_stream/agent_responses');
+  events.onmessage = event => line('robot', event.data, 'chat.robot');
+  document.getElementById('ask').addEventListener('submit', async event => {
+    event.preventDefault();
+    const input = document.getElementById('query'); const query = input.value.trim();
+    if (!query) return;
+    line('user', query, 'chat.you'); input.value = '';
+    const body = new FormData(); body.append('query', query);
+    setStatusKey('status.robotHandling');
+    try {
+      const response = await fetch('/submit_query', {method:'POST', body});
+      const data = await response.json();
+      if (data.success) setStatusKey('status.sent');
+      else setStatusKey('status.operationFailed', {detail: data.message || t('error.requestRejected')});
+    } catch (error) { setStatusKey('status.sendFailed', {detail: error.message}); }
+  });
+  setLanguage(uiLanguage);
+  setVideoMode('analysis');
+  refreshStatus(); refreshPolicyStatus();
+  window.setInterval(refreshStatus, 1000);
+  window.setInterval(refreshPolicyStatus, 1000);
+</script>
+</body>
+</html>

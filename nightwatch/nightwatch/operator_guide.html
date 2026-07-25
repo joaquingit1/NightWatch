@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>守夜犬工作台使用说明</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Courier New", Courier, monospace;
+      --paper: #f2efe7;
+      --paper-deep: #e6e0d3;
+      --ink: #090909;
+      --cobalt: #173ed1;
+      --orange: #ff4b13;
+      --acid: #f2e84b;
+      --mint: #9fe2c2;
+      --muted: #5f5a51;
+      --danger: #e13123;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper-deep); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(rgba(9, 9, 9, .055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(9, 9, 9, .055) 1px, transparent 1px);
+      background-size: 28px 28px;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+      opacity: .28;
+      background-image:
+        repeating-linear-gradient(8deg, transparent 0 9px, rgba(9, 9, 9, .025) 9px 10px),
+        repeating-linear-gradient(97deg, transparent 0 13px, rgba(9, 9, 9, .02) 13px 14px);
+      mix-blend-mode: multiply;
+    }
+    a { color: inherit; }
+    main { width: min(1260px, 100%); margin: auto; padding: 20px 22px 42px; }
+    header {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 220px;
+      margin-bottom: 24px;
+      padding: 22px;
+      overflow: hidden;
+      color: var(--paper);
+      background: var(--cobalt);
+      border: 4px solid var(--ink);
+      box-shadow: 9px 9px 0 var(--ink);
+    }
+    header::after {
+      content: "READ / CONTROL / SAFE /";
+      position: absolute;
+      right: -30px;
+      bottom: -10px;
+      color: var(--orange);
+      font: 900 2.35rem/1 Impact, Haettenschweiler, "Arial Black", sans-serif;
+      letter-spacing: -.04em;
+      transform: rotate(-5deg);
+      white-space: nowrap;
+    }
+    .header-copy, .header-actions { position: relative; z-index: 2; }
+    .eyebrow {
+      margin: 0 0 10px;
+      font-size: .72rem;
+      font-weight: 900;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 850px;
+      margin: 0;
+      font: 900 clamp(3.1rem, 8vw, 7rem)/.78 Impact, Haettenschweiler, "Arial Black", sans-serif;
+      letter-spacing: -.06em;
+      text-transform: uppercase;
+    }
+    .subtitle {
+      margin: 20px 0 0;
+      max-width: 760px;
+      font-weight: 900;
+      letter-spacing: .08em;
+      line-height: 1.45;
+    }
+    .header-actions { display: grid; align-content: start; justify-items: end; gap: 10px; min-width: 190px; }
+    .language-switch { display: flex; gap: 6px; }
+    button, .back-link {
+      min-height: 38px;
+      padding: 7px 10px;
+      color: var(--ink);
+      background: var(--paper);
+      border: 3px solid var(--ink);
+      border-radius: 0;
+      box-shadow: 3px 3px 0 var(--ink);
+      font: 900 .72rem "Arial Black", Arial, sans-serif;
+      cursor: pointer;
+      text-decoration: none;
+      text-transform: uppercase;
+    }
+    button:hover, .back-link:hover { background: var(--acid); transform: translate(-1px, -1px); box-shadow: 5px 5px 0 var(--ink); }
+    button.active { background: var(--orange); }
+    .back-link { display: inline-flex; align-items: center; background: var(--acid); }
+    .safety-banner {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 16px;
+      margin-bottom: 22px;
+      padding: 16px;
+      background: var(--orange);
+      border: 4px solid var(--ink);
+      box-shadow: 7px 7px 0 var(--ink);
+    }
+    .safety-banner strong {
+      align-self: center;
+      font: 900 2rem/1 Impact, "Arial Black", sans-serif;
+      text-transform: uppercase;
+    }
+    .safety-banner p { margin: 0; font-weight: 900; line-height: 1.55; }
+    .guide-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+      align-items: start;
+    }
+    section {
+      padding: 16px;
+      background: rgba(242, 239, 231, .97);
+      border: 4px solid var(--ink);
+      box-shadow: 7px 7px 0 var(--ink);
+    }
+    section:nth-child(4n + 2) { background: var(--paper-deep); }
+    section.wide { grid-column: 1 / -1; }
+    .section-index {
+      display: inline-block;
+      margin-bottom: 11px;
+      padding: 4px 7px;
+      color: white;
+      background: var(--cobalt);
+      border: 2px solid var(--ink);
+      font-weight: 900;
+    }
+    h2 {
+      margin: 0 0 14px;
+      font: 900 1.35rem/1.05 "Arial Black", Arial, sans-serif;
+      letter-spacing: -.03em;
+      text-transform: uppercase;
+    }
+    h3 {
+      margin: 0 0 7px;
+      font: 900 .85rem/1.1 "Arial Black", Arial, sans-serif;
+      text-transform: uppercase;
+    }
+    p, li { font-size: .84rem; line-height: 1.58; }
+    p { margin: 0; }
+    ol, ul { margin: 0; padding-left: 1.35rem; }
+    li + li { margin-top: 7px; }
+    .mode-grid, .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .mode-card, .mini-card {
+      padding: 11px;
+      background: white;
+      border: 3px solid var(--ink);
+    }
+    .mode-card:nth-child(2) { background: var(--acid); }
+    .mode-card:nth-child(3) { background: var(--mint); }
+    .mode-card:nth-child(4) { background: #b8c5ff; }
+    .mode-card p, .mini-card p { font-size: .78rem; }
+    table { width: 100%; border-collapse: collapse; background: white; font-size: .78rem; }
+    th, td { padding: 8px 9px; border: 2px solid var(--ink); text-align: left; vertical-align: top; }
+    th { color: white; background: var(--ink); text-transform: uppercase; }
+    kbd {
+      display: inline-block;
+      min-width: 28px;
+      padding: 2px 5px;
+      color: white;
+      background: var(--ink);
+      font: 900 .72rem "Courier New", monospace;
+      text-align: center;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 7px;
+      align-items: stretch;
+    }
+    .flow-step {
+      position: relative;
+      min-height: 100px;
+      padding: 9px;
+      background: white;
+      border: 3px solid var(--ink);
+      font-size: .74rem;
+      font-weight: 900;
+      line-height: 1.35;
+    }
+    .flow-step:nth-child(3n + 2) { background: var(--acid); }
+    .flow-step:nth-child(3n) { background: var(--mint); }
+    .flow-step b { display: block; margin-bottom: 8px; color: var(--orange); font-size: 1.2rem; }
+    .note {
+      margin-top: 12px;
+      padding: 10px;
+      background: var(--acid);
+      border: 3px solid var(--ink);
+      font-size: .78rem;
+      font-weight: 900;
+    }
+    footer {
+      margin-top: 22px;
+      padding: 12px;
+      color: white;
+      background: var(--ink);
+      border: 4px solid var(--ink);
+      font-size: .72rem;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    @media (max-width: 900px) {
+      .guide-grid { grid-template-columns: 1fr; }
+      section.wide { grid-column: auto; }
+      .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 600px) {
+      main { padding: 10px 10px 28px; }
+      header { min-height: 300px; padding: 14px; }
+      h1 { font-size: 3.5rem; }
+      .header-actions { min-width: 130px; }
+      .safety-banner { grid-template-columns: 1fr; }
+      .mode-grid, .mini-grid { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      table { font-size: .7rem; }
+      th, td { padding: 7px 6px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="header-copy">
+      <p class="eyebrow" data-i18n="header.eyebrow">OPERATOR MANUAL / REV. 01 / 安全操作说明</p>
+      <h1 data-i18n="header.title">守夜犬工作台使用说明</h1>
+      <p class="subtitle" data-i18n="header.subtitle">三种模式、手动接管、疲劳互动、休息区与导航限制的一页式指南。</p>
+    </div>
+    <div class="header-actions">
+      <div class="language-switch" role="group" aria-label="语言" data-i18n-aria-label="language.label">
+        <button id="languageZh" type="button" onclick="setLanguage('zh')" aria-pressed="true">中文</button>
+        <button id="languageEn" type="button" onclick="setLanguage('en')" aria-pressed="false">EN</button>
+      </div>
+      <a class="back-link" href="/operator" data-i18n="header.back">← 返回工作台</a>
+    </div>
+  </header>
+
+  <aside class="safety-banner">
+    <strong data-i18n="safety.label">安全优先</strong>
+    <p data-i18n="safety.copy">遇到人员、障碍物、路线异常或任何不确定情况，立即按 Space 或点击“紧急停止”。急停会切换为手动控制并停止导航；硬件安全与人工接管始终高于自主任务。</p>
+  </aside>
+
+  <div class="guide-grid">
+    <section>
+      <span class="section-index">01</span>
+      <h2 data-i18n="start.title">开始使用</h2>
+      <ol>
+        <li data-i18n="start.1">确认顶部连接状态显示机器人控制已连接；疲劳服务离线时仍可手动控制和急停。</li>
+        <li data-i18n="start.2">选择自主探索、睡眠分析或手动接管；三者只有一个能拥有运动权。</li>
+        <li data-i18n="start.3">使用手动移动按钮前先进入手动接管；该模式保持锁定，策略不能抢占。</li>
+        <li data-i18n="start.4">操作前观察视频、当前行为、运动所有者、电量和导航状态。</li>
+      </ol>
+    </section>
+
+    <section>
+      <span class="section-index">02</span>
+      <h2 data-i18n="modes.title">三种运行模式</h2>
+      <div class="mode-grid">
+        <article class="mode-card">
+          <h3 data-i18n="modes.exploreAuto">自主探索</h3>
+          <p data-i18n="modes.exploreAutoCopy">机器人探索未知区域并构建地图；疲劳检测和自动人员互动关闭。</p>
+        </article>
+        <article class="mode-card">
+          <h3 data-i18n="modes.cruiseAuto">睡眠分析</h3>
+          <p data-i18n="modes.cruiseAutoCopy">机器人继续自主巡航，按周期短暂停止、降低后部仰头扫描，并在可靠检测后互动。</p>
+        </article>
+        <article class="mode-card">
+          <h3 data-i18n="modes.exploreManual">手动接管</h3>
+          <p data-i18n="modes.exploreManualCopy">操作员直接控制移动和动作；自主导航与疲劳策略不能自动恢复或抢占。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="wide">
+      <span class="section-index">03</span>
+      <h2 data-i18n="keys.title">键盘快捷键</h2>
+      <table>
+        <thead><tr><th data-i18n="keys.key">按键</th><th data-i18n="keys.effect">作用</th><th data-i18n="keys.note">注意</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>W</kbd> <kbd>S</kbd></td><td data-i18n="keys.ws">前进 / 后退</td><td data-i18n="keys.hold">按住运动，松开停止</td></tr>
+          <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td data-i18n="keys.ad">左转 / 右转</td><td data-i18n="keys.manualOnly">仅手动控制可用</td></tr>
+          <tr><td><kbd>Q</kbd> <kbd>E</kbd></td><td data-i18n="keys.qe">左移 / 右移</td><td data-i18n="keys.manualOnly2">仅手动控制可用</td></tr>
+          <tr><td><kbd>Shift</kbd> / <kbd>Ctrl</kbd></td><td data-i18n="keys.speed">受限快速档 / 精细慢速档</td><td data-i18n="keys.combine">与移动键同时按住</td></tr>
+          <tr><td><kbd>Space</kbd></td><td data-i18n="keys.stop">紧急停止</td><td data-i18n="keys.stopNote">清空方向并切换手动</td></tr>
+          <tr><td><kbd>M</kbd></td><td data-i18n="keys.mode">自主 / 手动切换</td><td data-i18n="keys.modeNote">切换前自动停止</td></tr>
+          <tr><td><kbd>F</kbd> / <kbd>N</kbd></td><td data-i18n="keys.fn">立即仰头检测 / 接近最近的人</td><td data-i18n="keys.cruiseOnly">仅睡眠分析模式可用</td></tr>
+          <tr><td><kbd>V</kbd></td><td data-i18n="keys.v">切换摄像头 / 三维雷达主画面</td><td data-i18n="keys.vNote">另一画面保留在右下角小窗</td></tr>
+          <tr><td><kbd>L</kbd></td><td data-i18n="keys.map">打开三维地图</td><td data-i18n="keys.newTab">设置焦点区、禁区与休息区</td></tr>
+          <tr><td><kbd>1</kbd>–<kbd>8</kbd></td><td data-i18n="keys.actions">站起、趴下、坐下、招手及其他姿态动作</td><td data-i18n="keys.noRepeat">忽略键盘自动重复</td></tr>
+        </tbody>
+      </table>
+      <p class="note" data-i18n="keys.inputNote">在机器人对话输入框中打字时，所有快捷键自动禁用，避免文字输入误驱动机器人。</p>
+    </section>
+
+    <section>
+      <span class="section-index">04</span>
+      <h2 data-i18n="status.title">如何阅读状态</h2>
+      <div class="mini-grid">
+        <article class="mini-card"><h3 data-i18n="status.behavior">当前行为</h3><p data-i18n="status.behaviorCopy">机器人此刻正在探索、巡航、观察、护送还是保持停止。</p></article>
+        <article class="mini-card"><h3 data-i18n="status.owner">运动所有者</h3><p data-i18n="status.ownerCopy">谁拥有运动权，例如操作员、安全系统、巡航或护送流程。</p></article>
+        <article class="mini-card"><h3 data-i18n="status.fatigue">疲劳检测</h3><p data-i18n="status.fatigueCopy">显示运行或暂停，并给出探索、交互、离线等暂停原因。</p></article>
+        <article class="mini-card"><h3 data-i18n="status.interaction">交互阶段</h3><p data-i18n="status.interactionCopy">显示接近、等待问卷、护送等阶段；等待问卷时同时显示剩余秒数。</p></article>
+      </div>
+    </section>
+
+    <section>
+      <span class="section-index">05</span>
+      <h2 data-i18n="video.title">视频与疲劳指标</h2>
+      <ul>
+        <li data-i18n="video.1">工作台同时显示摄像头和三维雷达；默认摄像头为主，点击小窗切换按钮或按 V 可交换主画面。</li>
+        <li data-i18n="video.2">每个匿名目标显示疲劳指数和质量，低质量结果不会自动触发互动。</li>
+        <li data-i18n="video.3">模型断线后自动回退原始视频并清空旧指标，避免把历史结果当成实时结果。</li>
+        <li data-i18n="video.4">探索、人员互动、护送和安全保持期间，覆盖层会说明检测暂停原因。</li>
+      </ul>
+    </section>
+
+    <section class="wide">
+      <span class="section-index">06</span>
+      <h2 data-i18n="flow.title">睡眠分析互动流程</h2>
+      <div class="flow">
+        <div class="flow-step"><b>01</b><span data-i18n="flow.1">巡航后执行限时仰头扫描</span></div>
+        <div class="flow-step"><b>02</b><span data-i18n="flow.2">锁定持续疲劳目标</span></div>
+        <div class="flow-step"><b>03</b><span data-i18n="flow.3">安全接近并招手</span></div>
+        <div class="flow-step"><b>04</b><span data-i18n="flow.4">提示扫码或 NFC 问卷</span></div>
+        <div class="flow-step"><b>05</b><span data-i18n="flow.5">最多等待三分钟</span></div>
+        <div class="flow-step"><b>06</b><span data-i18n="flow.6">不需要指引则告别</span></div>
+        <div class="flow-step"><b>07</b><span data-i18n="flow.7">需要指引则护送到可用休息区</span></div>
+      </div>
+      <p class="note" data-i18n="flow.note">手动接管、紧急停止、模式切换或安全保持都会中断自动交互。交互和护送期间疲劳检测关闭，结束后仅在睡眠分析模式恢复巡航。</p>
+    </section>
+
+    <section>
+      <span class="section-index">07</span>
+      <h2 data-i18n="bedroom.title">地图区域与休息区</h2>
+      <ol>
+        <li data-i18n="bedroom.1">点击“三维地图”或按 L 打开地图页面。</li>
+        <li data-i18n="bedroom.2">在地图中绘制焦点区或禁区；焦点区可随时开启/关闭，禁区始终保留。</li>
+        <li data-i18n="bedroom.3">可保存多个经确认的休息区；操作台也可把机器人当前位置标记为休息区。</li>
+        <li data-i18n="bedroom.4">地图未对齐、位置无效或没有可用休息区时，机器人拒绝盲目护送。</li>
+      </ol>
+    </section>
+
+    <section>
+      <span class="section-index">08</span>
+      <h2 data-i18n="cadence.title">巡航检测节奏</h2>
+      <p data-i18n="cadence.copy">默认移动 25 秒后停止并仰头检测最多 7 秒。可设置移动间隔 10–300 秒、扫描 3–9 秒。扫描结束、失败或模式切换都会恢复姿态和路线。</p>
+      <p class="note" data-i18n="cadence.manual">手动接管不会自动执行定时姿态变化；立即扫描只在睡眠分析模式可用。</p>
+    </section>
+
+    <section>
+      <span class="section-index">09</span>
+      <h2 data-i18n="offline.title">机器狗未启动时</h2>
+      <p data-i18n="offline.copy">可使用离线安全预览查看完整工作台和说明页。页面会明确显示“离线安全预览”，所有硬件命令返回拒绝，不会假装动作已经执行。</p>
+    </section>
+
+    <section>
+      <span class="section-index">10</span>
+      <h2 data-i18n="trouble.title">常见问题</h2>
+      <ul>
+        <li data-i18n="trouble.1">移动按钮不可用：先切换到手动接管。</li>
+        <li data-i18n="trouble.2">扫描/接近按钮不可用：先切换到睡眠分析模式。</li>
+        <li data-i18n="trouble.3">没有疲劳指标：检查疲劳服务状态、画面中是否有有效人脸以及检测是否被策略暂停。</li>
+        <li data-i18n="trouble.4">不能护送：检查休息区、地图对齐、导航和机器人连接状态。</li>
+        <li data-i18n="trouble.5">页面或网络异常：松开所有按键并按 Space；机器人端 500 ms 看门狗会自动停止手动速度。</li>
+      </ul>
+    </section>
+  </div>
+
+  <footer data-i18n="footer">NIGHT WATCH / OPERATOR MANUAL / SAFETY BEFORE AUTONOMY</footer>
+</main>
+<script>
+  const LANGUAGE_STORAGE_KEY = 'nightwatch.operator.language';
+  const translations = {
+    zh: {
+      'page.title': '守夜犬工作台使用说明',
+      'language.label': '语言',
+      'header.eyebrow': 'OPERATOR MANUAL / REV. 01 / 安全操作说明',
+      'header.title': '守夜犬工作台使用说明',
+      'header.subtitle': '三种模式、手动接管、疲劳互动、休息区与导航限制的一页式指南。',
+      'header.back': '← 返回工作台',
+      'safety.label': '安全优先',
+      'safety.copy': '遇到人员、障碍物、路线异常或任何不确定情况，立即按 Space 或点击“紧急停止”。急停会切换为手动控制并停止导航；硬件安全与人工接管始终高于自主任务。',
+      'start.title': '开始使用',
+      'start.1': '确认顶部连接状态显示机器人控制已连接；疲劳服务离线时仍可手动控制和急停。',
+      'start.2': '选择自主探索、睡眠分析或手动接管；三者只有一个能拥有运动权。',
+      'start.3': '使用手动移动按钮前先进入手动接管；该模式保持锁定，策略不能抢占。',
+      'start.4': '操作前观察视频、当前行为、运动所有者、电量和导航状态。',
+      'modes.title': '三种运行模式',
+      'modes.exploreAuto': '自主探索',
+      'modes.exploreAutoCopy': '机器人探索未知区域并构建地图；疲劳检测和自动人员互动关闭。',
+      'modes.cruiseAuto': '睡眠分析',
+      'modes.cruiseAutoCopy': '机器人继续自主巡航，按周期短暂停止、降低后部仰头扫描，并在可靠检测后互动。',
+      'modes.exploreManual': '手动接管',
+      'modes.exploreManualCopy': '操作员直接控制移动和动作；自主导航与疲劳策略不能自动恢复或抢占。',
+      'keys.title': '键盘快捷键',
+      'keys.key': '按键', 'keys.effect': '作用', 'keys.note': '注意',
+      'keys.ws': '前进 / 后退', 'keys.hold': '按住运动，松开停止',
+      'keys.ad': '左转 / 右转', 'keys.manualOnly': '仅手动控制可用',
+      'keys.qe': '左移 / 右移', 'keys.manualOnly2': '仅手动控制可用',
+      'keys.speed': '受限快速档 / 精细慢速档', 'keys.combine': '与移动键同时按住',
+      'keys.stop': '紧急停止', 'keys.stopNote': '清空方向并切换手动',
+      'keys.mode': '自主 / 手动切换', 'keys.modeNote': '切换前自动停止',
+      'keys.fn': '立即仰头检测 / 接近最近的人', 'keys.cruiseOnly': '仅睡眠分析模式可用',
+      'keys.v': '切换摄像头 / 三维雷达主画面', 'keys.vNote': '另一画面保留在右下角小窗',
+      'keys.map': '打开三维地图', 'keys.newTab': '设置焦点区、禁区与休息区',
+      'keys.actions': '站起、趴下、坐下、招手及其他姿态动作', 'keys.noRepeat': '忽略键盘自动重复',
+      'keys.inputNote': '在机器人对话输入框中打字时，所有快捷键自动禁用，避免文字输入误驱动机器人。',
+      'status.title': '如何阅读状态',
+      'status.behavior': '当前行为', 'status.behaviorCopy': '机器人此刻正在探索、巡航、观察、护送还是保持停止。',
+      'status.owner': '运动所有者', 'status.ownerCopy': '谁拥有运动权，例如操作员、安全系统、巡航或护送流程。',
+      'status.fatigue': '疲劳检测', 'status.fatigueCopy': '显示运行或暂停，并给出探索、交互、离线等暂停原因。',
+      'status.interaction': '交互阶段', 'status.interactionCopy': '显示接近、等待问卷、护送等阶段；等待问卷时同时显示剩余秒数。',
+      'video.title': '视频与疲劳指标',
+      'video.1': '工作台同时显示摄像头和三维雷达；默认摄像头为主，点击小窗切换按钮或按 V 可交换主画面。',
+      'video.2': '每个匿名目标显示疲劳指数和质量，低质量结果不会自动触发互动。',
+      'video.3': '模型断线后自动回退原始视频并清空旧指标，避免把历史结果当成实时结果。',
+      'video.4': '探索、人员互动、护送和安全保持期间，覆盖层会说明检测暂停原因。',
+      'flow.title': '睡眠分析互动流程',
+      'flow.1': '巡航后执行限时仰头扫描', 'flow.2': '锁定持续疲劳目标', 'flow.3': '安全接近并招手',
+      'flow.4': '提示扫码或 NFC 问卷', 'flow.5': '最多等待三分钟', 'flow.6': '不需要指引则告别',
+      'flow.7': '需要指引则护送到可用休息区',
+      'flow.note': '手动接管、紧急停止、模式切换或安全保持都会中断自动交互。交互和护送期间疲劳检测关闭，结束后仅在睡眠分析模式恢复巡航。',
+      'bedroom.title': '地图区域与休息区',
+      'bedroom.1': '点击“三维地图”或按 L 打开地图页面。',
+      'bedroom.2': '在地图中绘制焦点区或禁区；焦点区可随时开启/关闭，禁区始终保留。',
+      'bedroom.3': '可保存多个经确认的休息区；操作台也可把机器人当前位置标记为休息区。',
+      'bedroom.4': '地图未对齐、位置无效或没有可用休息区时，机器人拒绝盲目护送。',
+      'cadence.title': '巡航检测节奏',
+      'cadence.copy': '默认移动 25 秒后停止并仰头检测最多 7 秒。可设置移动间隔 10–300 秒、扫描 3–9 秒。扫描结束、失败或模式切换都会恢复姿态和路线。',
+      'cadence.manual': '手动接管不会自动执行定时姿态变化；立即扫描只在睡眠分析模式可用。',
+      'offline.title': '机器狗未启动时',
+      'offline.copy': '可使用离线安全预览查看完整工作台和说明页。页面会明确显示“离线安全预览”，所有硬件命令返回拒绝，不会假装动作已经执行。',
+      'trouble.title': '常见问题',
+      'trouble.1': '移动按钮不可用：先切换到手动接管。',
+      'trouble.2': '扫描/接近按钮不可用：先切换到睡眠分析模式。',
+      'trouble.3': '没有疲劳指标：检查疲劳服务状态、画面中是否有有效人脸以及检测是否被策略暂停。',
+      'trouble.4': '不能护送：检查休息区、地图对齐、导航和机器人连接状态。',
+      'trouble.5': '页面或网络异常：松开所有按键并按 Space；机器人端 500 ms 看门狗会自动停止手动速度。',
+      'footer': 'NIGHT WATCH / OPERATOR MANUAL / 安全高于自主'
+    },
+    en: {
+      'page.title': 'Night Watch Operator Guide',
+      'language.label': 'Language',
+      'header.eyebrow': 'OPERATOR MANUAL / REV. 01 / SAFE OPERATION',
+      'header.title': 'NIGHT WATCH OPERATOR GUIDE',
+      'header.subtitle': 'One-page guide to three modes, manual takeover, fatigue interaction, rest areas, and navigation limits.',
+      'header.back': '← Back to console',
+      'safety.label': 'Safety first',
+      'safety.copy': 'If a person, obstacle, route anomaly, or any uncertainty appears, press Space or click Emergency Stop immediately. Emergency stop switches to manual control and stops navigation. Hardware safety and operator takeover always outrank autonomous tasks.',
+      'start.title': 'Getting started',
+      'start.1': 'Confirm that the top status says robot control is connected. Manual control and emergency stop still work if the fatigue service is offline.',
+      'start.2': 'Choose Autonomous Exploration, Sleep Analysis, or Manual Override. Exactly one mode owns motion.',
+      'start.3': 'Enter Manual Override before using movement controls. It stays latched and policy cannot take control away.',
+      'start.4': 'Before acting, check the video, current behavior, motion owner, battery, and navigation state.',
+      'modes.title': 'Three operating modes',
+      'modes.exploreAuto': 'Autonomous Exploration',
+      'modes.exploreAutoCopy': 'The robot explores unknown areas and builds the map. Fatigue detection and automatic person interactions are off.',
+      'modes.cruiseAuto': 'Sleep Analysis',
+      'modes.cruiseAutoCopy': 'The robot patrols, periodically performs a short rear-lowered head-up scan, and interacts only after reliable detection.',
+      'modes.exploreManual': 'Manual Override',
+      'modes.exploreManualCopy': 'The operator directly controls movement and actions. Navigation and fatigue policy cannot resume or take over automatically.',
+      'keys.title': 'Keyboard shortcuts',
+      'keys.key': 'Key', 'keys.effect': 'Effect', 'keys.note': 'Note',
+      'keys.ws': 'Forward / backward', 'keys.hold': 'Hold to move; release to stop',
+      'keys.ad': 'Turn left / right', 'keys.manualOnly': 'Manual control only',
+      'keys.qe': 'Strafe left / right', 'keys.manualOnly2': 'Manual control only',
+      'keys.speed': 'Bounded fast / precision slow gear', 'keys.combine': 'Hold with a movement key',
+      'keys.stop': 'Emergency stop', 'keys.stopNote': 'Clears direction and switches to manual',
+      'keys.mode': 'Toggle autonomous / manual', 'keys.modeNote': 'Stops before switching',
+      'keys.fn': 'Immediate head-up scan / approach nearest person', 'keys.cruiseOnly': 'Sleep Analysis only',
+      'keys.v': 'Swap camera / 3D lidar primary view', 'keys.vNote': 'The other view stays in the lower-right picture-in-picture',
+      'keys.map': 'Open the 3D map', 'keys.newTab': 'Set focus, keep-out, and rest areas',
+      'keys.actions': 'Stand, lie down, sit, wave, and other posture actions', 'keys.noRepeat': 'Keyboard auto-repeat ignored',
+      'keys.inputNote': 'All keyboard controls are disabled while typing in the robot dialogue field, preventing text entry from driving the robot.',
+      'status.title': 'Reading the status panel',
+      'status.behavior': 'Current behavior', 'status.behaviorCopy': 'Whether the robot is exploring, patrolling, observing, escorting, or holding.',
+      'status.owner': 'Motion owner', 'status.ownerCopy': 'Who holds motion authority, such as the operator, safety system, patrol, or escort flow.',
+      'status.fatigue': 'Fatigue detection', 'status.fatigueCopy': 'Shows running or paused and explains exploration, interaction, offline, or safety pauses.',
+      'status.interaction': 'Interaction stage', 'status.interactionCopy': 'Shows approach, form wait, and escort stages. The form wait also shows remaining seconds.',
+      'video.title': 'Video and fatigue metrics',
+      'video.1': 'The console shows camera and 3D lidar together. Camera is primary by default; use the picture-in-picture control or press V to swap.',
+      'video.2': 'Each anonymous subject shows a fatigue index and quality. Low-quality results cannot trigger an interaction.',
+      'video.3': 'If the model disconnects, the page falls back to raw video and clears old metrics so historical results never look live.',
+      'video.4': 'During exploration, person interaction, escort, or a safety hold, the overlay explains why detection is paused.',
+      'flow.title': 'Sleep Analysis interaction',
+      'flow.1': 'Patrol, then run a bounded head-up scan', 'flow.2': 'Lock a sustained fatigue target', 'flow.3': 'Approach safely and wave',
+      'flow.4': 'Offer the QR or NFC form', 'flow.5': 'Wait up to three minutes', 'flow.6': 'Say goodbye if guidance is declined',
+      'flow.7': 'Escort to a usable rest area if requested',
+      'flow.note': 'Manual takeover, emergency stop, a mode change, or safety hold interrupts the interaction. Detection is off during interaction and escort, then patrol resumes only in Sleep Analysis.',
+      'bedroom.title': 'Map limits and rest areas',
+      'bedroom.1': 'Click 3D Lidar Map or press L.',
+      'bedroom.2': 'Draw focus and keep-out areas. Focus can be toggled; keep-out hazards remain enforced.',
+      'bedroom.3': 'Store multiple confirmed rest areas; the console can also mark the robot’s current location.',
+      'bedroom.4': 'If the map is not aligned, a position is invalid, or no usable rest area exists, the robot refuses a blind escort.',
+      'cadence.title': 'Cruise scan cadence',
+      'cadence.copy': 'By default, the robot moves for 25 seconds and scans for at most 7 seconds. Set movement to 10–300 seconds and scan to 3–9 seconds. Timeout, failure, or a mode switch restores stance and route.',
+      'cadence.manual': 'Manual Override never changes posture on a timer. Immediate scan is available only in Sleep Analysis.',
+      'offline.title': 'When the robot is not running',
+      'offline.copy': 'Use the safe offline preview to view the complete console and guide. It clearly reports offline preview, rejects every hardware action, and never pretends a command reached the robot.',
+      'trouble.title': 'Troubleshooting',
+      'trouble.1': 'Movement buttons disabled: switch to Manual Takeover first.',
+      'trouble.2': 'Scan or approach disabled: switch to Sleep Analysis first.',
+      'trouble.3': 'No fatigue metrics: check the fatigue service, whether a valid face is visible, and whether policy paused detection.',
+      'trouble.4': 'Escort unavailable: check rest areas, map alignment, navigation, and robot connection.',
+      'trouble.5': 'Page or network problem: release every key and press Space. The robot-side 500 ms watchdog automatically clears manual velocity.',
+      'footer': 'NIGHT WATCH / OPERATOR MANUAL / SAFETY BEFORE AUTONOMY'
+    }
+  };
+  let uiLanguage = (() => {
+    try { return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'en' ? 'en' : 'zh'; }
+    catch (_) { return 'zh'; }
+  })();
+  function t(key, fallback = key) {
+    return translations[uiLanguage]?.[key] ?? translations.zh[key] ?? fallback;
+  }
+  function setLanguage(language) {
+    uiLanguage = language === 'en' ? 'en' : 'zh';
+    try { localStorage.setItem(LANGUAGE_STORAGE_KEY, uiLanguage); } catch (_) {}
+    document.documentElement.lang = uiLanguage === 'en' ? 'en' : 'zh-CN';
+    document.title = t('page.title');
+    document.querySelectorAll('[data-i18n]').forEach(element => {
+      element.textContent = t(element.dataset.i18n, element.textContent);
+    });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
+      element.setAttribute('aria-label', t(element.dataset.i18nAriaLabel));
+    });
+    document.getElementById('languageZh').classList.toggle('active', uiLanguage === 'zh');
+    document.getElementById('languageEn').classList.toggle('active', uiLanguage === 'en');
+    document.getElementById('languageZh').setAttribute('aria-pressed', String(uiLanguage === 'zh'));
+    document.getElementById('languageEn').setAttribute('aria-pressed', String(uiLanguage === 'en'));
+  }
+  setLanguage(uiLanguage);
+</script>
+</body>
+</html>
