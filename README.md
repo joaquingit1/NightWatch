@@ -8,9 +8,9 @@
 
 **一句话：你做了什么，给谁用 / One sentence: what we built, and for whom**
 
-守夜犬是一只在场地里自主巡逻的疲劳关怀机器狗，服务于黑客松、深夜办公室这类容易忘记休息的空间：它发现持续疲劳的人，礼貌邀请，在征得同意后把人带到最近的休息区。
+守夜犬是一只自主行动的情绪支持机器狗，为任何需要被照看的人服务（老年人、养老院、行动不便或有障碍的人群，以及熬夜的工作者）；本次演示聚焦它的睡眠关怀场景：发现持续疲劳的人，礼貌邀请，在征得同意后把人带到最近的休息区。
 
-Night Watch is a fatigue-care robot dog that patrols a venue on its own, built for spaces where people forget to rest, such as hackathons and late-night offices: it notices sustained fatigue, offers a polite invitation, and escorts consenting visitors to the nearest rest area.
+Night Watch is an autonomous emotional-support robot dog for anyone who might need looking after (the elderly, nursing-home residents, people with disabilities, and late-night workers). The current demo focuses on its sleep-care scenario: it notices sustained fatigue, offers a polite invitation, and escorts consenting visitors to the nearest rest area.
 
 **问题：你为什么选择做这个主题 / Why this theme**
 
@@ -20,9 +20,9 @@ The competition theme is Reverse. Almost every AI product pushes people to work 
 
 **作品：机器人具体在干什么 / What the robot actually does**
 
-它自主探索场地并建图，巡逻时用本地视觉服务对着机器人相机持续做面部疲劳分析（多帧证据、置信度与质量门控）；识别到持续疲劳后靠近对方、语音问候，并展示背上的二维码问卷；访客提交问卷、操作员在工作台确认后，机器人先语音播报，再带路前往最近的标记休息区，到达后登记休息事件并显示唤醒检查倒计时；若访客表示不需要带领，它播一句关怀语音后离开。全程支持急停与人工接管，低电量会自动趴下待援。
+产品的完整定位是一只情绪支持机器狗；本次演示实现的是其中的睡眠关怀闭环。它自主探索场地并建图，巡逻时用本地视觉服务对着机器人相机持续做面部疲劳分析（多帧证据、置信度与质量门控）；识别到持续疲劳后靠近对方、语音问候，并展示背上的二维码问卷；访客提交问卷、操作员在工作台确认后，机器人先语音播报，再带路前往最近的标记休息区，到达后登记休息事件并显示唤醒检查倒计时；若访客表示不需要带领，它播一句关怀语音后离开。全程支持急停与人工接管，低电量会自动趴下待援。
 
-It explores and maps the venue autonomously, and while patrolling it runs continuous facial fatigue analysis on the robot camera through a local vision service (multi-frame evidence with confidence and quality gates). When it sees sustained fatigue it approaches, greets the person by voice, and presents the QR questionnaire on its back. After the visitor submits the form and the operator confirms on the workbench, the robot announces out loud and leads the way to the nearest marked rest area, registers the arrival, and shows a wake-check countdown. If the visitor declines an escort, it speaks one caring line and moves on. Emergency stop and manual takeover are available throughout, and the dog lies down to wait when its battery runs low.
+The full vision is an emotional-support robot dog; this demo implements its sleep-care loop. It explores and maps the venue autonomously, and while patrolling it runs continuous facial fatigue analysis on the robot camera through a local vision service (multi-frame evidence with confidence and quality gates). When it sees sustained fatigue it approaches, greets the person by voice, and presents the QR questionnaire on its back. After the visitor submits the form and the operator confirms on the workbench, the robot announces out loud and leads the way to the nearest marked rest area, registers the arrival, and shows a wake-check countdown. If the visitor declines an escort, it speaks one caring line and moves on. Emergency stop and manual takeover are available throughout, and the dog lies down to wait when its battery runs low.
 
 **DimOS：用了哪些能力，自己额外写了什么 / DimOS capabilities used, and what we wrote ourselves**
 
@@ -46,9 +46,9 @@ Human in the loop (the workbench): the operator switches among the three operati
 
 **（可选）商业落地的可能：谁会付钱，用户是谁 / (Optional) Commercial potential: who pays, who uses it**
 
-有可能，付费方是场地与组织方，而不是疲劳者本人：黑客松与活动主办方（参会者关怀，也是可见的品牌亮点）、企业园区与深夜办公室（员工关怀 / EHS 预算）、期末周的高校图书馆与自习空间、创意工作室与实验室。用户就是这些空间里熬夜的人。可行形态是"活动租赁 + 订阅"的机器人即服务；这套疲劳感知与护送栈也可以授权给机器人厂商，作为关怀类应用预装。边界同样清晰：不做绩效监控，不做医疗诊断，不做无人值守的安全监护。
+有，而且比单一的睡眠场景大得多，因为产品的本体是情绪支持机器狗，睡眠关怀只是本次演示选取的第一个切口。同一套能力（自主巡逻、发现需要关照的人、温和地靠近与陪伴、征得同意后引导到安全位置、把情况汇报给现场负责人）可以直接迁移到养老院与老年社区（巡视、陪伴、引导回房、异常时通知护工）、康复与残障辅助场景（行动不便者的陪走与引路）、医院候诊与夜间公共空间。付费方是机构与场地方，而不是被照看的人本人：养老与照护机构（人手最紧缺、支付意愿最明确的市场）、活动主办方、企业园区（员工关怀 / EHS 预算）、高校。用户是这些空间里需要被照看的人：老人、行动不便者、熬夜的工作者与学生。可行形态是机器人即服务（长期驻场订阅 + 活动租赁），这套感知与护送栈也可以授权给机器人厂商作为关怀类应用预装。边界同样清晰：辅助而非替代照护人员，不做绩效监控，不做医疗诊断，不做无人值守的安全监护。
 
-Yes, and the payer is the venue or organizer rather than the tired person: hackathon and event organizers (attendee care that doubles as a visible brand moment), corporate campuses and late-night offices (employee-care or EHS budgets), university libraries and study halls during finals, and studios or labs. The users are the people staying up inside those spaces. The likely shape is robot-as-a-service (event rental plus subscription), and the fatigue-sensing and escort stack could also be licensed to robot vendors as a preinstalled care application. The boundaries stay firm: no performance monitoring, no medical diagnosis, no unattended safety monitoring.
+Yes, and the opportunity is much larger than the sleep scenario alone, because the product is an emotional-support robot dog; sleep care is just the first slice we chose to demo. The same capability stack (autonomous patrol, noticing someone who needs attention, a gentle approach and companionship, consent-based guidance to a safe place, and reporting to on-site staff) transfers directly to nursing homes and elder-care communities (rounds, companionship, guiding residents back to their rooms, alerting caregivers), rehabilitation and disability support (walking alongside and guiding people with limited mobility), hospital waiting areas, and overnight public spaces. The payer is the institution or venue rather than the person being cared for: elder-care operators (the market with the most acute staffing shortage and the clearest willingness to pay), event organizers, corporate campuses (employee-care or EHS budgets), and universities. The users are the people who need looking after in those spaces: the elderly, people with limited mobility, and late-night workers and students. The likely shape is robot-as-a-service (long-term on-site subscription plus event rental), and the sensing and escort stack could also be licensed to robot vendors as a preinstalled care application. The boundaries stay firm: it assists caregivers instead of replacing them, with no performance monitoring, no medical diagnosis, and no unattended safety monitoring.
 
 ---
 
