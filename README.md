@@ -81,8 +81,10 @@ The Go2 operator workbench is served at `http://127.0.0.1:5555/operator`.
 Its exploration/cruise modes, manual keyboard controls, fatigue interaction,
 QR/NFC binding, and unique Bedroom behavior are specified in
 [`prds/P11-operator-workbench-v2.zh-CN.md`](prds/P11-operator-workbench-v2.zh-CN.md).
-The form URL defaults to local development and can later be replaced with
-`NIGHTWATCH_PUBLIC_FORM_URL=https://...`.
+The form URL defaults to local development. The current Tencent Cloud form is
+`http://82.157.96.225/form`; set
+`NIGHTWATCH_PUBLIC_FORM_URL=http://82.157.96.225/form` when starting the robot
+workbench for public QR/NFC use.
 
 ---
 

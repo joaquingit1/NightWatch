@@ -1,0 +1,25 @@
+[Unit]
+Description=NightWatch public intake form web
+After=network-online.target nightwatch-form-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/nightwatch-form/current/client
+Environment=NODE_ENV=production
+Environment=PORT=3020
+Environment=HOSTNAME=127.0.0.1
+Environment=API_BASE_URL=http://127.0.0.1:8020
+ExecStart=/home/ubuntu/.nvm/versions/node/v22.22.3/bin/node /opt/nightwatch-form/current/client/node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3020
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillSignal=SIGINT
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

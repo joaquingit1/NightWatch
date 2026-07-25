@@ -148,6 +148,22 @@ AdventureX 赛道提交材料，包含产品定位、感知—决策—行动闭
 
 修改此文件会影响**整个本地系统如何启动和退出**。
 
+### `deploy/tencent/`
+
+腾讯云公网问卷 `http://82.157.96.225/form` 的部署配置：
+
+- `nightwatch-form-web.service`：以生产模式运行 Next.js 问卷，云端本机端口
+  `3020`；
+- `nightwatch-form-api.service`：运行问卷 schema、提交和 SQLite 接口，云端
+  本机端口 `8020`；
+- `robotdog-fatigue-api.nginx.conf`：只把 `/form`、`/_next`、schema 和提交
+  接口转发给问卷服务；问卷列表和状态管理接口不对公网开放，其余路径继续
+  使用腾讯云原有疲劳模型 API；
+- `README.md`：记录服务器目录、发布软链接、数据位置和更新顺序。
+
+这些文件不包含 SSH 密码。云端问卷数据保存在
+`/var/lib/nightwatch-form/nightwatch.db`，不会写回 Git 仓库。
+
 ---
 
 ## 3. `02_yolov8face_mediapipe/`：模型二进制
@@ -1507,6 +1523,8 @@ Windows Media Foundation H.264 解码：
 | `5556` | `insta360_bridge` | Insta360 MJPEG |
 | `8010` | 机器人 `MapStreamer` 或 fake stream | 地图点云 WebSocket |
 | `9990` | DimOS MCP Server | 机器人技能调用 |
+| `3020` | 腾讯云 Next.js | 公网问卷网页，仅云端回环地址 |
+| `8020` | 腾讯云 FastAPI | 公网问卷数据接口，仅云端回环地址 |
 
 云端单独部署模型服务时，其 Uvicorn 可以监听 `8000`，再由 Nginx 通过 80 对外；这与本地集成脚本把模型放在 `8001` 并不冲突。
 

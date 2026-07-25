@@ -1,0 +1,29 @@
+[Unit]
+Description=NightWatch public intake form API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/nightwatch-form/current/server
+Environment=PYTHONUNBUFFERED=1
+Environment=DEMO_MODE=stub
+Environment=CAMERA_SOURCE=stub
+Environment=SCORER_BACKEND=stub
+Environment=ROBOT_BRIDGE_ENABLED=false
+Environment=INTAKE_DB_PATH=/var/lib/nightwatch-form/nightwatch.db
+Environment=CORS_ORIGINS=http://82.157.96.225
+ExecStart=/opt/nightwatch-form/venv/bin/python -m uvicorn app.main:app --app-dir /opt/nightwatch-form/current/server --host 127.0.0.1 --port 8020 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=30
+KillSignal=SIGINT
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/nightwatch-form
+
+[Install]
+WantedBy=multi-user.target
