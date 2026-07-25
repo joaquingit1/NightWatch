@@ -1,5 +1,57 @@
 # 守夜犬 Night Watch
 
+## 赛道问答 / Track Q&A
+
+> 以下问题是比赛赛道的提交要求，在文档最前面统一回答。
+>
+> The questions below are required by the competition track and are answered up front.
+
+**一句话：你做了什么，给谁用 / One sentence: what we built, and for whom**
+
+守夜犬是一只在场地里自主巡逻的疲劳关怀机器狗，服务于黑客松、深夜办公室这类容易忘记休息的空间：它发现持续疲劳的人，礼貌邀请，在征得同意后把人带到最近的休息区。
+
+Night Watch is a fatigue-care robot dog that patrols a venue on its own, built for spaces where people forget to rest, such as hackathons and late-night offices: it notices sustained fatigue, offers a polite invitation, and escorts consenting visitors to the nearest rest area.
+
+**问题：你为什么选择做这个主题 / Why this theme**
+
+比赛主题是 Reverse。几乎所有 AI 产品都在让人更高效、工作更久，我们把方向反过来：让 AI 劝人停下来。熬夜的人往往最后一个察觉自己的疲劳，而来自主管或手机推送的提醒容易变成考核压力；一只不带评判、能走到你身边的机器狗，恰好能补上这个空隙。
+
+The competition theme is Reverse. Almost every AI product pushes people to work faster and longer, so we reversed the direction: an AI that asks you to stop. Tired people are usually the last to notice their own fatigue, and a reminder from a manager or a phone notification can feel like evaluation. A judgment-free robot dog that can physically come to your side fills that gap.
+
+**作品：机器人具体在干什么 / What the robot actually does**
+
+它自主探索场地并建图，巡逻时用本地视觉服务对着机器人相机持续做面部疲劳分析（多帧证据、置信度与质量门控）；识别到持续疲劳后靠近对方、语音问候，并展示背上的二维码问卷；访客提交问卷、操作员在工作台确认后，机器人先语音播报，再带路前往最近的标记休息区，到达后登记休息事件并显示唤醒检查倒计时；若访客表示不需要带领，它播一句关怀语音后离开。全程支持急停与人工接管，低电量会自动趴下待援。
+
+It explores and maps the venue autonomously, and while patrolling it runs continuous facial fatigue analysis on the robot camera through a local vision service (multi-frame evidence with confidence and quality gates). When it sees sustained fatigue it approaches, greets the person by voice, and presents the QR questionnaire on its back. After the visitor submits the form and the operator confirms on the workbench, the robot announces out loud and leads the way to the nearest marked rest area, registers the arrival, and shows a wake-check countdown. If the visitor declines an escort, it speaks one caring line and moves on. Emergency stop and manual takeover are available throughout, and the dog lies down to wait when its battery runs low.
+
+**DimOS：用了哪些能力，自己额外写了什么 / DimOS capabilities used, and what we wrote ourselves**
+
+用到的 DimOS 能力：Go2 WebRTC 连接与运动控制；导航栈（LiDAR 体素建图、A* 规划与 costmap、frontier 探索、点击导航）；感知（相机流、YOLO 人体检测与跟踪、CLIP 空间记忆嵌入）；记忆（SpatialMemory 语义地图与地点标注、地图导出）；技能框架与 MCP 工具链，接入 LLM Agent（OpenAI gpt-4o）驱动对话与技能调用；rerun 遥测可视化。
+
+自己额外写的（`nightwatch/`、`server/`、`client/`）：Curiosity 行为监督器（自主 / 睡眠分析 / 手动三模式编排、好奇跟随、拟犬手势）；人脸疲劳评分服务与策略桥（RestScore、门控、护送评分）；不可打断的护送技能（最近休息区、到达判定）；QR/NFC 问卷与签名令牌绑定、操作员收件箱与确认弹窗；双语操作工作台（遥操作、LIDAR 三维页、语音按钮）与公网表单隧道部署；中英混合自然语音链（kokoro 优先、edge-tts、`say` 兜底、预合成 wav 缓存）；以及一批可靠性改造（地图持久化与 ICP 重定位共识、用 YOLO 替代需要 CUDA 的 EdgeTAM 跟踪器、Go2 运动使能修复、Agent 异常自愈）。
+
+DimOS capabilities we used: the Go2 WebRTC connection and motion control; the navigation stack (LiDAR voxel mapping, A* planning with costmaps, frontier exploration, click-to-navigate); perception (camera streaming, YOLO person detection and tracking, CLIP embeddings for spatial memory); memory (SpatialMemory semantic mapping and place tagging, map export); the skill framework and MCP toolchain with an LLM agent (OpenAI gpt-4o) driving conversation and skill calls; and rerun telemetry visualization.
+
+What we wrote ourselves (`nightwatch/`, `server/`, `client/`): the Curiosity behavior supervisor (orchestrating autonomous, sleep-analysis, and manual modes, curious following, dog-like gestures); the facial fatigue scoring service and policy bridge (RestScore, gating, escort scoring); the uninterruptible escort skill (nearest rest area, arrival detection); the QR/NFC questionnaire with signed-token binding plus the operator inbox and confirmation dialogs; the bilingual operator workbench (teleoperation, 3D LiDAR page, voice buttons) and the public form tunnel deployment; the bilingual natural-voice TTS chain (kokoro first, edge-tts, `say` fallback, pre-synthesized wav cache); and a set of reliability fixes (map persistence with ICP relocalization consensus, a YOLO tracker replacing the CUDA-only EdgeTAM, Go2 motion-enable repair, agent error self-healing).
+
+**人工介入的程度：哪些是遥控的，哪些是自主的 / Human intervention: what is teleoperated, what is autonomous**
+
+自主执行：探索与建图、巡逻、疲劳扫描、发现并靠近疲劳者、护送时的导航与避障、到达登记、低电量趴下。
+
+人工介入（工作台）：三种运行模式由操作员切换；手动模式下是键盘遥操作，急停随时可用；护送派发是人工门控的：机器人当面邀请、访客扫码即时确认的会话会直接护送（访客本人即时同意），而来自公网问卷的请求必须由操作员在弹窗中确认，或提前打开 AUTO ESCORT 开关作为长效授权；语音播报按钮与拟犬动作按钮也都是手动触发。原则是：一份公开问卷永远不能单独指挥机器人，环路里必须有一次人的确认。
+
+Autonomous: exploration and mapping, patrol, fatigue scanning, finding and approaching tired people, navigation and obstacle avoidance during escorts, arrival registration, and the low-battery lie-down.
+
+Human in the loop (the workbench): the operator switches among the three operating modes; manual mode is keyboard teleoperation, and emergency stop is always available. Escort dispatch is human-gated: a session the robot opened in person, confirmed on the spot by the visitor scanning its QR code, escorts directly (the visitor's own immediate consent), while any request arriving from the public form must be confirmed by the operator in a popup dialog, or pre-authorized by arming the AUTO ESCORT switch. The voice preset buttons and dog-gesture buttons are also manual. The principle: a public form submission alone can never command the robot; a human confirmation is always in the loop.
+
+**（可选）商业落地的可能：谁会付钱，用户是谁 / (Optional) Commercial potential: who pays, who uses it**
+
+有可能，付费方是场地与组织方，而不是疲劳者本人：黑客松与活动主办方（参会者关怀，也是可见的品牌亮点）、企业园区与深夜办公室（员工关怀 / EHS 预算）、期末周的高校图书馆与自习空间、创意工作室与实验室。用户就是这些空间里熬夜的人。可行形态是"活动租赁 + 订阅"的机器人即服务；这套疲劳感知与护送栈也可以授权给机器人厂商，作为关怀类应用预装。边界同样清晰：不做绩效监控，不做医疗诊断，不做无人值守的安全监护。
+
+Yes, and the payer is the venue or organizer rather than the tired person: hackathon and event organizers (attendee care that doubles as a visible brand moment), corporate campuses and late-night offices (employee-care or EHS budgets), university libraries and study halls during finals, and studios or labs. The users are the people staying up inside those spaces. The likely shape is robot-as-a-service (event rental plus subscription), and the fatigue-sensing and escort stack could also be licensed to robot vendors as a preinstalled care application. The boundaries stay firm: no performance monitoring, no medical diagnosis, no unattended safety monitoring.
+
+---
+
 ![守夜犬封面 / Night Watch cover](./docs/images/cover_picture.png)
 
 > **每个 AI 都想让你更努力。它想让你休息。**
@@ -28,6 +80,7 @@ Built for [AdventureX 2026](https://adventurex.org) · Theme: **Reverse** · `#a
 
 ## 目录 / Contents
 
+- [赛道问答 / Track Q&A](#赛道问答--track-qa)
 - [当前实现与能力边界 / Current implementation and boundaries](#当前实现与能力边界--current-implementation-and-boundaries)
 - [当前体验闭环 / Current experience loop](#当前体验闭环--current-experience-loop)
 - [页面入口 / Application pages](#页面入口--application-pages)
