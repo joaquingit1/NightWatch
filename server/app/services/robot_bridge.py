@@ -5,20 +5,95 @@ import json
 import logging
 import time
 import uuid
+from collections import defaultdict, deque
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 import requests
 
 from app.contracts import (
     FatigueAssessment,
     FatigueFrame,
+    PolicyEvent,
     fatigue_assessment_to_dict,
 )
 
 logger = logging.getLogger("nightwatch.robot_bridge")
 
 MODEL_VERSION = "nightwatch-fatigue-v1"
+_REFUSAL_PREFIXES = (
+    "Tool not found:",
+    "Cannot start '",
+    "Cannot start the escort:",
+    "Error running tool '",
+    "No sleeping area is known",
+    "Escort ended without reaching",
+    # Robot-side refusals follow these shapes throughout nightwatch (mode
+    # gates, missing odometry, refused scans/gestures). Treating an unknown
+    # refusal as success let a refused begin_intake_wait block the single
+    # policy task for the full 180 s window.
+    "Cannot ",
+    "Could not ",
+    "Intake wait refused",
+    "Fatigue scan refused",
+    "Dog expression refused",
+    "Stand-up failed",
+)
+AUTO_ESCORT_CONFIRMATION = (
+    "收到，我带你去休息区，跟我来。 "
+    "Got it — follow me, I'll take you to the rest area."
+)
+AUTO_ESCORT_BUSY_DETAIL = (
+    "自动护送已跳过：机器人正忙 | Auto-escort skipped: robot busy"
+)
+AUTO_ESCORT_INTAKE_ACTIVE_DETAIL = (
+    "自动护送已跳过：问诊会话进行中 | "
+    "Auto-escort skipped: an intake session is active"
+)
+AUTO_ESCORT_OFFLINE_DETAIL = (
+    "自动护送已跳过：机器人离线 | Auto-escort skipped: robot offline"
+)
+AUTO_ESCORT_MANUAL_DETAIL = (
+    "自动护送已跳过：手动接管中 | Auto-escort skipped: manual override is latched"
+)
+AUTO_ESCORT_CANCELLED_DETAIL = (
+    "自动护送已中止：手动接管或服务停止 | "
+    "Auto-escort cancelled: manual override or shutdown"
+)
+_STATE_UTTERANCES = {
+    "TRIAGE": "triage_01",
+    "APPROACH": "approach_01",
+    "DIAGNOSE": "diagnose_01",
+    "PRESCRIBE": "prescribe_01",
+    "ESCORT": "escort_01",
+    "NAP_REGISTERED": "nap_registered_01",
+}
+
+
+@dataclass(frozen=True)
+class SkillResult:
+    ok: bool
+    text: str
+
+
+@dataclass(frozen=True)
+class ActiveIntake:
+    interaction_id: str
+    session_id: str
+    track_id: str
+    opened_at: float
+    expires_at: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "interaction_id": self.interaction_id,
+            "session_id": self.session_id,
+            "track_id": self.track_id,
+            "opened_at": self.opened_at,
+            "expires_at": self.expires_at,
+        }
 
 
 def _factors_from_frame(frame: FatigueFrame) -> tuple[str, ...]:
@@ -59,30 +134,98 @@ def frame_to_assessment(
         bbox=bbox,
         fatigue_score=min(1.0, max(0.0, frame.score / 100.0)),
         confidence=min(1.0, max(0.0, frame.confidence)),
-        quality=min(1.0, max(0.0, frame.confidence)),
+        quality=min(
+            1.0,
+            max(
+                0.0,
+                frame.quality if frame.quality > 0.0 else frame.confidence,
+            ),
+        ),
         factors=_factors_from_frame(frame),
         observation_seconds=observation_seconds,
-        model_version=MODEL_VERSION,
+        model_version=(
+            frame.model_version
+            if frame.model_version not in {"", "unknown"}
+            else MODEL_VERSION
+        ),
     )
 
 
 class RobotBridge:
-    """Emit FatigueAssessment JSON lines for the robot policy handoff contract."""
+    """Join live fatigue inference to the Nightwatch Go2 policy.
+
+    Every scored window is persisted locally and POSTed to the robot operator
+    API. Sustained high-quality evidence starts the suspicious protocol, and a
+    stronger sustained result after that protocol requests an escort. Calls
+    are serialized so two people can never compete for motion authority.
+    """
 
     def __init__(
         self,
         assessment_path: str,
         status_url: str,
+        assessment_url: str,
+        mcp_url: str,
         window_seconds: float,
         get_latest_frame: Callable[[], FatigueFrame],
+        publish_event: Callable[[PolicyEvent], None] | None = None,
+        *,
+        intervene_score: float = 0.65,
+        escort_score: float = 0.75,
+        min_confidence: float = 0.55,
+        min_quality: float = 0.35,
+        min_observation_seconds: float = 2.0,
+        consecutive_windows: int = 2,
+        person_cooldown_seconds: float = 180.0,
+        intake_timeout_seconds: float = 180.0,
+        update_intake_status: Callable[[str, str], Any] | None = None,
     ) -> None:
-        self._assessment_path = Path(assessment_path)
+        self._assessment_path = Path(assessment_path) if assessment_path else None
         self._status_url = status_url
-        self._window_seconds = window_seconds
+        self._assessment_url = assessment_url
+        self._mcp_url = mcp_url
+        self._window_seconds = max(0.1, window_seconds)
         self._get_latest_frame = get_latest_frame
+        self._publish_event = publish_event
+        self._intervene_score = min(1.0, max(0.0, intervene_score))
+        self._escort_score = min(1.0, max(self._intervene_score, escort_score))
+        self._min_confidence = min(1.0, max(0.0, min_confidence))
+        self._min_quality = min(1.0, max(0.0, min_quality))
+        self._min_observation_seconds = max(0.0, min_observation_seconds)
+        self._consecutive_windows = max(1, consecutive_windows)
+        self._person_cooldown_seconds = max(0.0, person_cooldown_seconds)
+        self._intake_timeout_seconds = max(5.0, intake_timeout_seconds)
+        self._update_intake_status = update_intake_status
+
         self._track_started: dict[str, float] = {}
-        self._task: asyncio.Task | None = None
+        self._last_seen: dict[str, float] = {}
+        self._streaks: defaultdict[str, int] = defaultdict(int)
+        self._cooldown_until: defaultdict[str, float] = defaultdict(float)
+        self._recent: deque[FatigueAssessment] = deque(
+            maxlen=max(20, self._consecutive_windows * 6)
+        )
+        self._latest_status: dict[str, Any] = {
+            "enabled": True,
+            "connected": False,
+        }
+        self._task: asyncio.Task[None] | None = None
+        self._policy_task: asyncio.Task[None] | None = None
+        self._care_target: str | None = None
         self._stopping = False
+        self._request_id = 0
+        self._active_intake: ActiveIntake | None = None
+        self._intake_future: asyncio.Future[dict[str, Any]] | None = None
+        self._intake_response_claimed = False
+        # Auto-escort runs in its own slot because the poll loop cancels
+        # _policy_task outside Sleep Analysis, and this switch is explicitly
+        # meant to work in Autonomous too. It still counts as an interaction
+        # everywhere (_interaction_busy), so there is never a second owner.
+        self._auto_escort_task: asyncio.Task[None] | None = None
+        # Operator-held consent switch for public (unbound) QR/NFC responses.
+        # AGENTS.md invariant 14 stands: an unbound submission still cannot
+        # command the robot by itself. It only becomes actionable while a human
+        # holds this switch on, and it is off at every startup (fail-safe).
+        self._auto_escort_enabled = False
 
     async def start(self) -> None:
         self._stopping = False
@@ -90,64 +233,832 @@ class RobotBridge:
 
     async def stop(self) -> None:
         self._stopping = True
-        if self._task is not None:
-            self._task.cancel()
+        tasks = [
+            task
+            for task in (self._task, self._policy_task, self._auto_escort_task)
+            if task is not None
+        ]
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
             try:
-                await self._task
+                await task
             except asyncio.CancelledError:
                 pass
-            self._task = None
+        self._task = None
+        self._policy_task = None
+        self._auto_escort_task = None
+
+    def snapshot(self) -> dict[str, Any]:
+        status = dict(self._latest_status)
+        status.update(
+            {
+                "enabled": (
+                    status.get("operating_mode") in {None, "sleep_analysis"}
+                ),
+                "policy_active": self._interaction_busy(),
+                "intervene_score": self._intervene_score,
+                "escort_score": self._escort_score,
+                "auto_escort_enabled": self._auto_escort_enabled,
+                "active_interaction": (
+                    self._active_intake.to_dict()
+                    if self._active_intake is not None
+                    and self._active_intake.expires_at > time.time()
+                    else None
+                ),
+            }
+        )
+        return status
+
+    def active_intake(self) -> dict[str, Any] | None:
+        active = self._active_intake
+        if active is None or active.expires_at <= time.time():
+            return None
+        return active.to_dict()
+
+    def accept_intake_response(self, response: dict[str, Any]) -> bool:
+        """Resolve the one active visitor session; first valid response wins."""
+        active = self._active_intake
+        future = self._intake_future
+        if (
+            active is None
+            or active.expires_at <= time.time()
+            or str(response.get("session_id", "")) != active.session_id
+            or future is None
+            or future.done()
+            or self._intake_response_claimed
+        ):
+            return False
+        self._intake_response_claimed = True
+        loop = future.get_loop()
+        loop.call_soon_threadsafe(future.set_result, dict(response))
+        return True
+
+    def _interaction_busy(self) -> bool:
+        """One movement owner: any care sequence, intake, or escort in flight."""
+        return any(
+            task is not None and not task.done()
+            for task in (self._policy_task, self._auto_escort_task)
+        )
+
+    def request_intake_escort(self, response_id: str, track_id: str) -> bool:
+        """Dispatch an explicit, consented intake escort without blocking HTTP."""
+        if self._interaction_busy():
+            return False
+        if not self._robot_accepts_intervention():
+            return False
+        self._policy_task = asyncio.create_task(
+            self._run_intake_escort(response_id, track_id)
+        )
+        return True
+
+    def auto_escort_enabled(self) -> bool:
+        return self._auto_escort_enabled
+
+    def set_auto_escort(self, enabled: bool) -> bool:
+        """Flip the operator's auto-escort consent switch; returns the new state.
+
+        Pure server state, so it is accepted in every operating mode and while
+        the robot is offline: the operator must be able to arm or disarm the
+        public queue before the dog is back on its feet.
+        """
+        self._auto_escort_enabled = bool(enabled)
+        logger.info(
+            "auto escort %s", "enabled" if self._auto_escort_enabled else "disabled"
+        )
+        return self._auto_escort_enabled
+
+    def request_auto_escort(self, response_id: str, track_id: str) -> bool:
+        """Escort a public (unbound) questionnaire response, if the operator armed it.
+
+        AGENTS.md invariant 14 keeps an unbound public response from commanding
+        the robot on its own. This path exists only because a human flipped the
+        AUTO ESCORT switch in the operator console: that toggle is the explicit
+        operator consent which makes the submission actionable. With the switch
+        off (the startup default) the response only lands in the pending queue
+        and the ledger, exactly as before.
+
+        Never silently swallowed: an offline or busy robot publishes a policy
+        event so the operator can see why the queue entry was left alone, and
+        the record stays ``pending`` for manual dispatch.
+        """
+        if not self._auto_escort_enabled:
+            return False
+        if not self._latest_status.get("connected", False):
+            self._event("RESET", track_id, AUTO_ESCORT_OFFLINE_DETAIL)
+            return False
+        busy_detail = self._auto_escort_busy_detail()
+        if busy_detail is not None:
+            self._event("RESET", track_id, busy_detail)
+            return False
+        self._auto_escort_task = asyncio.create_task(
+            self._run_auto_escort(response_id, track_id)
+        )
+        return True
+
+    def _auto_escort_busy_detail(self) -> str | None:
+        """Why this response must stay in the queue, or None when clear."""
+        if self._interaction_busy():
+            return AUTO_ESCORT_BUSY_DETAIL
+        active = self._active_intake
+        if active is not None and active.expires_at > time.time():
+            return AUTO_ESCORT_INTAKE_ACTIVE_DETAIL
+        if self._latest_status.get("operating_mode") == "manual":
+            # Manual means manual (invariant 2): while an operator is driving,
+            # a public request waits for a human to dispatch it.
+            return AUTO_ESCORT_MANUAL_DETAIL
+        return None
+
+    async def _run_auto_escort(self, response_id: str, track_id: str) -> None:
+        """Auto-escort with an observable cancellation (mode change/shutdown)."""
+        try:
+            await self._run_intake_escort(
+                response_id,
+                track_id,
+                announce_text=AUTO_ESCORT_CONFIRMATION,
+            )
+        except asyncio.CancelledError:
+            # The record was never moved off "pending", so the operator queue
+            # still holds it; the event says why it stopped.
+            self._event("RESET", track_id, AUTO_ESCORT_CANCELLED_DETAIL)
+            raise
+
+    async def operator_action(self, action: str) -> SkillResult:
+        """Dispatch one explicitly allow-listed command-center action."""
+        skills: dict[str, tuple[str, dict[str, Any]]] = {
+            "lie_down": ("lie_down_until_resumed", {}),
+            "stand_up": ("stand_up_and_resume", {}),
+            "hold": ("hold_position", {"reason": "operator console"}),
+            "resume": ("resume_curiosity", {}),
+            "wave": ("perform_dog_expression", {"expression": "Hello"}),
+            "set_home": ("set_home_here", {}),
+            "return_home": ("return_home_now", {}),
+            "mark_sleep": ("tag_area_here", {"name": "sleeping_area"}),
+            "mode_autonomous": (
+                "set_operating_mode",
+                {"mode": "autonomous"},
+            ),
+            "mode_sleep": (
+                "set_operating_mode",
+                {"mode": "sleep_analysis"},
+            ),
+            "mode_manual": ("set_operating_mode", {"mode": "manual"}),
+            "scan_now": ("request_fatigue_scan", {}),
+        }
+        if action == "start_intake":
+            return self.start_manual_intake()
+        if action in {"auto_escort_on", "auto_escort_off"}:
+            # Server-side consent state, not a robot command: it must stay
+            # settable in every operating mode and while the dog is offline.
+            enabled = self.set_auto_escort(action == "auto_escort_on")
+            return SkillResult(
+                True,
+                (
+                    "自动护送已开启：扫码请求将立即护送 | "
+                    "Auto-escort ON: QR requests are escorted immediately"
+                )
+                if enabled
+                else (
+                    "自动护送已关闭：扫码请求仅进入队列 | "
+                    "Auto-escort OFF: QR requests only enter the queue"
+                ),
+            )
+        command = skills.get(action)
+        if command is None:
+            return SkillResult(False, f"Unsupported robot action: {action}")
+        if not self._latest_status.get("connected", False):
+            return SkillResult(False, "Robot is offline")
+        skill, arguments = command
+        return await self._call_skill(skill, arguments)
+
+    def start_manual_intake(self) -> SkillResult:
+        """Operator-triggered QR intake: speak the invite and open the session.
+
+        The automatic care sequence only reaches the QR/speech stage after a
+        sustained fatigue streak in Sleep Analysis, so demos could never show
+        it on demand. This runs the same intake wait (speak invite, signed
+        session, escort on consent, farewell on decline/timeout) without the
+        fatigue gates. One interaction at a time, same as the automatic path.
+        """
+        active = self._active_intake
+        if active is not None and active.expires_at > time.time():
+            return SkillResult(
+                False,
+                "An intake session is already active; wait for it to finish.",
+            )
+        if self._interaction_busy():
+            return SkillResult(
+                False,
+                "Another interaction is in progress; wait for it to finish.",
+            )
+        self._policy_task = asyncio.create_task(
+            self._run_manual_intake("operator-manual")
+        )
+        return SkillResult(
+            True,
+            "Intake started: speaking the invite and showing the QR session.",
+        )
+
+    async def _run_manual_intake(self, track_id: str) -> None:
+        self._event(
+            "PRESCRIBE",
+            track_id,
+            "操作员触发问诊，请扫码 | Operator-triggered intake; please scan the QR",
+        )
+        response = await self._wait_for_intake(track_id)
+        if response is None:
+            self._event(
+                "RESET",
+                track_id,
+                "问卷等待超时，返回巡逻 | Intake timed out; returning to patrol",
+            )
+            await self._farewell(
+                "别太累了，记得休息。再见！ "
+                "Please remember to rest. Goodbye!"
+            )
+            return
+        if not bool(response.get("consent_analysis")) or not bool(
+            response.get("wants_escort")
+        ):
+            self._event(
+                "RESET",
+                track_id,
+                "访客暂不需要引导，友好告别 | Visitor declined guidance; saying goodbye",
+            )
+            await self._farewell(
+                "好的，别太累了，记得休息。再见！ "
+                "Okay—please remember to rest. Goodbye!"
+            )
+            return
+        self._event(
+            "ESCORT",
+            track_id,
+            "护送前往最近休息区 | Escorting to the nearest sleeping area",
+        )
+        escort = await self._call_skill("escort_to_sleeping_area")
+        if not escort.ok:
+            self._event(
+                "RESET",
+                track_id,
+                f"护送请求被拒绝 | Escort refused: {escort.text}",
+            )
+            return
+        if not self._escort_arrived(escort):
+            self._event(
+                "RESET",
+                track_id,
+                f"护送未能抵达休息区 | Escort did not arrive: {escort.text}",
+            )
+            return
+        self._event(
+            "NAP_REGISTERED",
+            track_id,
+            "已抵达休息区，开始安静休息 | Arrived at the sleeping area; rest started",
+        )
 
     async def _run_forever(self) -> None:
         while not self._stopping:
+            started = time.monotonic()
             try:
                 await self._emit_once()
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - keep loop alive
-                logger.warning("robot bridge emit failed: %s", exc)
-            await asyncio.sleep(self._window_seconds)
+            except Exception as exc:  # noqa: BLE001 - keep the bridge alive
+                logger.warning("robot bridge cycle failed: %s", exc)
+            elapsed = time.monotonic() - started
+            await asyncio.sleep(max(0.0, self._window_seconds - elapsed))
 
     async def _emit_once(self) -> None:
-        await asyncio.to_thread(self._poll_robot_status)
-        frame = self._get_latest_frame()
-        if frame.person_id is None:
+        status = await asyncio.to_thread(self._poll_robot_status)
+        if status is not None:
+            self._latest_status = {
+                "enabled": True,
+                "connected": True,
+                **status,
+            }
+        else:
+            self._latest_status = {
+                **self._latest_status,
+                "enabled": True,
+                "connected": False,
+            }
+
+        operating_mode = self._latest_status.get("operating_mode")
+        if operating_mode == "manual" and (
+            self._auto_escort_task is not None
+            and not self._auto_escort_task.done()
+        ):
+            # Manual means manual (invariant 2): Manual Override preempts the
+            # operator-armed auto escort. Autonomous does not, because the
+            # switch is explicitly meant to work there.
+            self._auto_escort_task.cancel()
+        if operating_mode not in {None, "sleep_analysis"}:
+            if self._policy_task is not None and not self._policy_task.done():
+                self._policy_task.cancel()
+            # Exploration and Manual Override must never accumulate a hidden
+            # streak that fires immediately when Sleep Analysis is selected.
+            self._track_started.clear()
+            self._last_seen.clear()
+            self._streaks.clear()
+            return
+        owner = str(self._latest_status.get("owner", "")).lower()
+        policy_active = self._interaction_busy()
+        capture_active = bool(
+            operating_mode is None
+            or self._latest_status.get("scan_active")
+            or self._latest_status.get("face_observation_active")
+            or owner in {"sleep_scan", "face_observation"}
+            or policy_active
+        )
+        if not capture_active:
+            # Never replay the last scan's cached frame while the dog is back
+            # in motion. A new scan must build a new sustained streak.
+            self._track_started.clear()
+            self._last_seen.clear()
+            self._streaks.clear()
             return
 
-        track_id = frame.person_id
-        now = time.time()
-        if track_id not in self._track_started:
-            self._track_started[track_id] = now
-        observation_seconds = max(0.0, now - self._track_started[track_id])
-
-        assessment = frame_to_assessment(
-            frame,
-            observation_seconds=observation_seconds,
-            track_id=track_id,
+        frame = self._get_latest_frame()
+        tracks = frame.people or (
+            [frame] if frame.person_id is not None else []
         )
-        await asyncio.to_thread(self._append_assessment, assessment)
+        if not tracks:
+            self._expire_missing_tracks(time.time())
+            return
 
-    def _poll_robot_status(self) -> None:
+        now = time.time()
+        assessments: list[FatigueAssessment] = []
+        actionable: set[str] = set()
+        observation_subject = str(
+            self._latest_status.get("face_observation_subject") or ""
+        )
+        if observation_subject.startswith("person:"):
+            observation_subject = observation_subject.removeprefix("person:")
+        # A stable body-track key is sufficient during the bounded active
+        # observation. Persistent re-identification can happen later; it must
+        # not block first contact while a passer-by walks out of frame.
+        stable_person_id = observation_subject or self._care_target
+        observed_body_bbox = self._latest_status.get("face_observation_bbox")
+        for tracked in tracks:
+            if tracked.person_id is None:
+                continue
+            track_id = tracked.person_id
+            target_associated = bool(
+                stable_person_id
+                and (
+                    len(tracks) == 1
+                    or self._face_belongs_to_observed_body(
+                        tracked.bbox,
+                        observed_body_bbox,
+                        frame_width=tracked.frame_width,
+                        frame_height=tracked.frame_height,
+                    )
+                )
+            )
+            if target_associated:
+                track_id = stable_person_id
+                tracked = replace(tracked, person_id=stable_person_id)
+            self._track_started.setdefault(track_id, now)
+            self._last_seen[track_id] = now
+            assessment = frame_to_assessment(
+                tracked,
+                observation_seconds=max(
+                    0.0, now - self._track_started[track_id]
+                ),
+                track_id=track_id,
+            )
+            assessments.append(assessment)
+            self._recent.append(assessment)
+            # Direct gaze is still measured and surfaced, but an actively
+            # framed sleepy visitor looking down must not be vetoed. Body/face
+            # association supplies stronger target ownership in this phase.
+            if tracked.looking_at_camera or target_associated:
+                actionable.add(assessment.assessment_id)
+
+        writes = []
+        for assessment in assessments:
+            if self._assessment_path is not None:
+                writes.append(
+                    asyncio.to_thread(self._append_assessment, assessment)
+                )
+            if self._assessment_url:
+                writes.append(
+                    asyncio.to_thread(self._post_assessment, assessment)
+                )
+        if writes:
+            await asyncio.gather(*writes, return_exceptions=True)
+
+        for assessment in assessments:
+            self._evaluate_candidate(
+                assessment,
+                direct_attention=assessment.assessment_id in actionable,
+            )
+        self._expire_missing_tracks(now)
+
+    @staticmethod
+    def _face_belongs_to_observed_body(
+        face_bbox: tuple[int, int, int, int],
+        body_bbox: Any,
+        *,
+        frame_width: int,
+        frame_height: int,
+    ) -> bool:
+        if not isinstance(body_bbox, (list, tuple)) or len(body_bbox) != 4:
+            return False
+        x1, y1, x2, y2 = (float(value) for value in body_bbox)
+        fx1, fy1, fx2, fy2 = (float(value) for value in face_bbox)
+        cx = (fx1 + fx2) * 0.5
+        cy = (fy1 + fy2) * 0.5
+        # New robot status publishes normalized body coordinates so face/body
+        # association is invariant to server-side resizing. Retain pixel-box
+        # support for one rolling-upgrade cycle.
+        if max(abs(x1), abs(y1), abs(x2), abs(y2)) <= 1.5:
+            if frame_width <= 0 or frame_height <= 0:
+                return False
+            cx /= float(frame_width)
+            cy /= float(frame_height)
+        return x1 <= cx <= x2 and y1 <= cy <= y2
+
+    def _evaluate_candidate(
+        self,
+        assessment: FatigueAssessment,
+        *,
+        direct_attention: bool,
+    ) -> None:
+        track_id = assessment.track_id
+        eligible = (
+            direct_attention
+            and
+            assessment.fatigue_score >= self._intervene_score
+            and assessment.confidence >= self._min_confidence
+            and assessment.quality >= self._min_quality
+            and assessment.observation_seconds >= self._min_observation_seconds
+        )
+        self._streaks[track_id] = self._streaks[track_id] + 1 if eligible else 0
+        if self._streaks[track_id] < self._consecutive_windows:
+            return
+
+        now = time.time()
+        if now < self._cooldown_until[track_id]:
+            return
+        if self._interaction_busy():
+            return
+        if not self._robot_accepts_intervention():
+            return
+
+        self._streaks[track_id] = 0
+        self._cooldown_until[track_id] = now + self._person_cooldown_seconds
+        self._policy_task = asyncio.create_task(self._run_care_sequence(track_id))
+
+    def _robot_accepts_intervention(self) -> bool:
+        if not self._latest_status.get("connected", False):
+            return False
+        if self._latest_status.get("operating_mode") not in {
+            None,
+            "sleep_analysis",
+        }:
+            return False
+        hold_reason = str(self._latest_status.get("hold_reason") or "")
+        if hold_reason and hold_reason != "SLEEP_SCAN":
+            return False
+        behavior = str(self._latest_status.get("behavior", "")).lower()
+        return behavior not in {"hold", "manual", "escort", "intervene"}
+
+    async def _run_care_sequence(self, track_id: str) -> None:
+        self._care_target = track_id
+        intervention_started = time.time()
+        try:
+            await self._run_care_sequence_for_target(
+                track_id, intervention_started
+            )
+        finally:
+            self._care_target = None
+
+    async def _run_care_sequence_for_target(
+        self, track_id: str, intervention_started: float
+    ) -> None:
+        self._event(
+            "TRIAGE",
+            track_id,
+            "检测到持续疲劳信号 | Sustained fatigue signal detected",
+        )
+
+        behavior = str(self._latest_status.get("behavior", "")).lower()
+        if behavior == "follow":
+            await self._call_skill("stop_following")
+
+        self._event(
+            "APPROACH",
+            track_id,
+            "正在接近并抬高相机 | Approaching and raising camera",
+        )
+        intervene = await self._call_skill(
+            "potential_detected", {"query": "tired person"}
+        )
+        if not intervene.ok:
+            self._event(
+                "RESET",
+                track_id,
+                f"接近请求被拒绝 | Intervention refused: {intervene.text}",
+            )
+            return
+
+        self._event(
+            "DIAGNOSE",
+            track_id,
+            "近距离疲劳确认完成 | Close-range fatigue check complete",
+        )
+        # Do not reuse the pre-approach samples that first raised suspicion.
+        # The escort decision must be based on fresh close/wave-period frames.
+        if not self._escort_evidence_is_sustained(
+            track_id, since=intervention_started
+        ):
+            self._event(
+                "RESET",
+                track_id,
+                "证据未持续，返回巡逻 | Evidence did not persist; returning to patrol",
+            )
+            return
+
+        self._event(
+            "PRESCRIBE",
+            track_id,
+            "邀请通过二维码或NFC选择是否需要引导 | "
+            "Inviting the visitor to choose via QR or NFC",
+        )
+        response = await self._wait_for_intake(track_id)
+        if response is None:
+            self._event(
+                "RESET",
+                track_id,
+                "问卷等待超时，友好告别并返回巡逻 | "
+                "Intake timed out; saying goodbye and returning to patrol",
+            )
+            await self._farewell(
+                "别太累了，记得休息。再见！ "
+                "Please remember to rest. Goodbye!"
+            )
+            return
+        if not bool(response.get("consent_analysis")) or not bool(
+            response.get("wants_escort")
+        ):
+            self._event(
+                "RESET",
+                track_id,
+                "访客暂不需要引导，友好告别 | "
+                "Visitor declined guidance; saying goodbye",
+            )
+            await self._farewell(
+                "好的，别太累了，记得休息。再见！ "
+                "Okay—please remember to rest. Goodbye!"
+            )
+            return
+        self._event(
+            "ESCORT",
+            track_id,
+            "护送前往最近休息区 | Escorting to the nearest sleeping area",
+        )
+        escort = await self._call_skill("escort_to_sleeping_area")
+        if not escort.ok:
+            self._event(
+                "RESET",
+                track_id,
+                f"护送请求被拒绝 | Escort refused: {escort.text}",
+            )
+            return
+        if not self._escort_arrived(escort):
+            self._event(
+                "RESET",
+                track_id,
+                f"护送未能抵达休息区 | Escort did not arrive: {escort.text}",
+            )
+            return
+        self._event(
+            "NAP_REGISTERED",
+            track_id,
+            "已抵达休息区，开始安静休息 | Arrived at the sleeping area; rest started",
+        )
+
+    async def _wait_for_intake(
+        self, track_id: str
+    ) -> dict[str, Any] | None:
+        """Open one expiring QR/NFC session and wait without blocking the API."""
+        loop = asyncio.get_running_loop()
+        opened_at = time.time()
+        active = ActiveIntake(
+            interaction_id=uuid.uuid4().hex,
+            session_id=uuid.uuid4().hex,
+            track_id=track_id,
+            opened_at=opened_at,
+            expires_at=opened_at + self._intake_timeout_seconds,
+        )
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        self._active_intake = active
+        self._intake_future = future
+        self._intake_response_claimed = False
+        wait_started = await self._call_skill(
+            "begin_intake_wait",
+            {"timeout_s": self._intake_timeout_seconds},
+        )
+        if not wait_started.ok:
+            self._active_intake = None
+            self._intake_future = None
+            future.cancel()
+            return None
+        await self._call_skill(
+            "speak",
+            {
+                "text": (
+                    "如果你需要帮助，可以扫描我身上的二维码或触碰NFC，"
+                    "我可以带你去休息区。 "
+                    "Scan my QR code or tap NFC if you would like me to "
+                    "guide you to a rest area."
+                )
+            },
+        )
+        self._event(
+            "WAITING_FORM",
+            track_id,
+            "等待绑定的问卷回答 | Waiting for the bound intake response",
+        )
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(future),
+                timeout=self._intake_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            await self._call_skill("end_intake_wait")
+            if self._intake_future is future:
+                self._intake_future = None
+                self._active_intake = None
+                self._intake_response_claimed = False
+            if not future.done():
+                future.cancel()
+
+    async def _farewell(self, text: str) -> None:
+        await self._call_skill("speak", {"text": text})
+        await self._call_skill(
+            "perform_dog_expression",
+            {"expression": "Hello"},
+        )
+
+    @staticmethod
+    def _escort_arrived(escort: SkillResult) -> bool:
+        """True only when the escort skill reports a real arrival.
+
+        The skill returns a summary either way ("Escort complete: arrived…" vs
+        "Escort ended without reaching…"), so a successful MCP call alone must
+        never register a nap for an escort that timed out mid-route.
+        """
+        return escort.ok and escort.text.startswith("Escort complete")
+
+    async def _run_intake_escort(
+        self,
+        response_id: str,
+        track_id: str,
+        *,
+        announce_text: str | None = None,
+    ) -> None:
+        self._event(
+            "ESCORT",
+            track_id,
+            "访客已确认，护送前往休息区 | Visitor confirmed; starting escort",
+        )
+        if announce_text:
+            # Auto-escort has no preceding conversation, so the dog confirms out
+            # loud before it starts moving; a person must never be led away by a
+            # robot that said nothing.
+            await self._call_skill("speak", {"text": announce_text})
+        escort = await self._call_skill("escort_to_sleeping_area")
+        arrived = self._escort_arrived(escort)
+        status = "escorted" if arrived else "pending"
+        if self._update_intake_status is not None:
+            await asyncio.to_thread(
+                self._update_intake_status, response_id, status
+            )
+        if not escort.ok:
+            self._event(
+                "RESET",
+                track_id,
+                f"护送请求被拒绝 | Escort refused: {escort.text}",
+            )
+            return
+        if not arrived:
+            self._event(
+                "RESET",
+                track_id,
+                f"护送未能抵达休息区 | Escort did not arrive: {escort.text}",
+            )
+            return
+        self._event(
+            "NAP_REGISTERED",
+            track_id,
+            "已抵达休息区，开始安静休息 | Arrived at the sleeping area; rest started",
+        )
+
+    def _escort_evidence_is_sustained(
+        self, track_id: str, *, since: float = 0.0
+    ) -> bool:
+        matching = [
+            item
+            for item in reversed(self._recent)
+            if item.track_id == track_id and item.ts >= since
+        ][: self._consecutive_windows]
+        if len(matching) < self._consecutive_windows:
+            return False
+        return all(
+            item.fatigue_score >= self._escort_score
+            and item.confidence >= self._min_confidence
+            and item.quality >= self._min_quality
+            and item.observation_seconds >= self._min_observation_seconds
+            for item in matching
+        )
+
+    async def _call_skill(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> SkillResult:
+        return await asyncio.to_thread(
+            self._call_skill_sync, name, arguments or {}
+        )
+
+    def _call_skill_sync(self, name: str, arguments: dict[str, Any]) -> SkillResult:
+        self._request_id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._request_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        try:
+            response = requests.post(self._mcp_url, json=payload, timeout=125)
+            response.raise_for_status()
+            body = response.json()
+            if "error" in body:
+                return SkillResult(False, str(body["error"]))
+            parts = (body.get("result") or {}).get("content") or []
+            text = "\n".join(
+                str(part.get("text", ""))
+                for part in parts
+                if isinstance(part, dict) and part.get("type") == "text"
+            ).strip()
+            refused = text.startswith(_REFUSAL_PREFIXES)
+            return SkillResult(not refused, text or f"{name} completed")
+        except Exception as exc:  # noqa: BLE001 - converted to policy result
+            logger.warning("robot skill %s failed: %s", name, exc)
+            return SkillResult(False, str(exc))
+
+    def _event(self, state: str, track_id: str | None, detail: str) -> None:
+        if self._publish_event is None:
+            return
+        self._publish_event(
+            PolicyEvent(
+                ts=time.time(),
+                state=state,
+                target_person=track_id,
+                utterance=_STATE_UTTERANCES.get(state),
+                detail=detail,
+            )
+        )
+
+    def _poll_robot_status(self) -> dict[str, Any] | None:
         try:
             response = requests.get(self._status_url, timeout=2)
             response.raise_for_status()
             payload = response.json()
-            logger.debug(
-                "robot status: behavior=%s map_phase=%s",
-                payload.get("behavior"),
-                payload.get("map_phase"),
-            )
-        except Exception as exc:  # noqa: BLE001 - non-fatal
+            return payload if isinstance(payload, dict) else None
+        except Exception as exc:  # noqa: BLE001 - robot can be offline during dev
             logger.debug("robot status unavailable: %s", exc)
+            return None
+
+    def _post_assessment(self, assessment: FatigueAssessment) -> None:
+        try:
+            response = requests.post(
+                self._assessment_url,
+                json=fatigue_assessment_to_dict(assessment),
+                timeout=2,
+            )
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - audit log still preserves it
+            logger.debug("robot assessment endpoint unavailable: %s", exc)
 
     def _append_assessment(self, assessment: FatigueAssessment) -> None:
+        if self._assessment_path is None:
+            return
         self._assessment_path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(fatigue_assessment_to_dict(assessment), separators=(",", ":"))
         with self._assessment_path.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
-        logger.info(
-            "wrote assessment track=%s score=%.2f obs=%.1fs",
-            assessment.track_id,
-            assessment.fatigue_score,
-            assessment.observation_seconds,
-        )
+
+    def _expire_missing_tracks(self, now: float) -> None:
+        stale_after = max(30.0, self._window_seconds * 3)
+        stale = [
+            track_id
+            for track_id, last_seen in self._last_seen.items()
+            if now - last_seen > stale_after
+        ]
+        for track_id in stale:
+            self._last_seen.pop(track_id, None)
+            self._track_started.pop(track_id, None)
+            self._streaks.pop(track_id, None)
