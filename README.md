@@ -14,7 +14,7 @@ for [AdventureX 2026](https://adventurex.org) · Theme: **Reverse** ·
 
 ## The idea
 
-Hackathons celebrate staying up. Night Watch does the opposite. A Unitree Go2 robot dog roams the venue, reads signs of fatigue from a camera, and offers rest instead of another caffeine hit. If you accept, it walks you to a nap zone, keeps watch over multiple sleepers at once, checks that belongings are untouched, verifies breathing without contact, and wakes you on schedule with a soft escalation: a whisper, then a paw wave, then a small celebration when you are back.
+Night Watch is an emotional support, autonomous dog. A Unitree Go2 robot dog roams wherever people push themselves too hard — a hackathon floor, an office at 2am, a study hall during finals — reads signs of fatigue from a camera, and offers rest instead of another caffeine hit. If you accept, it walks you to a nap zone, keeps watch over multiple sleepers at once, checks that belongings are untouched, verifies breathing without contact, and wakes you on schedule with a soft escalation: a whisper, then a paw wave, then a small celebration when you are back.
 
 Everything runs locally on laptops over a private network. No cloud required for the live demo.
 
@@ -22,16 +22,16 @@ Everything runs locally on laptops over a private network. No cloud required for
 
 ## What you will see
 
-| Moment        | What happens                                                             |
-| ------------- | ------------------------------------------------------------------------ |
-| **Patrol**    | The dog moves through a mapped corridor on its own                       |
-| **Triage**    | A live fatigue score (0-100) appears on the booth screen                 |
-| **Diagnose**  | The dog pauses, takes a short reading, and explains what it sees         |
-| **Prescribe** | It recommends a nap in a warm, pre-recorded voice                        |
-| **Escort**    | It leads you to the mattress at a careful pace                           |
-| **Nap ledger**| Arrival registers the nap and starts a visible wake-check countdown       |
-| **Expression**| A >60% hand cover queues a safe dog gesture without cancelling navigation |
-| **Posture**   | Lie down holds indefinitely; Stand releases the hold and resumes safely   |
+| Moment         | What happens                                                              |
+| -------------- | ------------------------------------------------------------------------- |
+| **Patrol**     | The dog moves through a mapped corridor on its own                        |
+| **Triage**     | A live fatigue score (0-100) appears on the booth screen                  |
+| **Diagnose**   | The dog pauses, takes a short reading, and explains what it sees          |
+| **Prescribe**  | It recommends a nap in a warm, pre-recorded voice                         |
+| **Escort**     | It leads you to the mattress at a careful pace                            |
+| **Nap ledger** | Arrival registers the nap and starts a visible wake-check countdown       |
+| **Expression** | A >60% hand cover queues a safe dog gesture without cancelling navigation |
+| **Posture**    | Lie down holds indefinitely; Stand releases the hold and resumes safely   |
 
 ---
 
@@ -88,16 +88,16 @@ The form URL defaults to local development and can later be replaced with
 
 ## Technology
 
-| Layer           | What we use                                                                    |
-| --------------- | ------------------------------------------------------------------------------ |
-| Robot           | Unitree Go2 via DimensionalOS (WebRTC)                                         |
-| On-device AI    | Local LLM (Qwen via Ollama) for agent commands; no internet needed in demo     |
-| Vision          | YOLOv8-Face detection + MediaPipe face landmarks, OpenCV                       |
-| Fatigue scoring | Interpretable thresholds, with optional learned models trained on venue data   |
-| Breathing       | Planned optical-flow verification; not active in the current demo               |
-| Voice           | Robot TTS fallback chain plus two reviewed booth WAV cues                       |
-| Booth           | Live video streams, score card, thought ticker, leaderboard                    |
-| Data            | Consent-gated capture sessions; SQLite ledger for the night's events           |
+| Layer           | What we use                                                                  |
+| --------------- | ---------------------------------------------------------------------------- |
+| Robot           | Unitree Go2 via DimensionalOS (WebRTC)                                       |
+| On-device AI    | Local LLM (Qwen via Ollama) for agent commands; no internet needed in demo   |
+| Vision          | YOLOv8-Face detection + MediaPipe face landmarks, OpenCV                     |
+| Fatigue scoring | Interpretable thresholds, with optional learned models trained on venue data |
+| Breathing       | Planned optical-flow verification; not active in the current demo            |
+| Voice           | Robot TTS fallback chain plus two reviewed booth WAV cues                    |
+| Booth           | Live video streams, score card, thought ticker, leaderboard                  |
+| Data            | Consent-gated capture sessions; SQLite ledger for the night's events         |
 
 ---
 
@@ -122,10 +122,10 @@ If you are a judge, sponsor, or visitor at the booth: ask for the live loop, the
 
 The booth stack is three independently run pieces:
 
-| Service | Path | Port | Role |
-| --- | --- | --- | --- |
-| **Booth UI** | `client/` (Next.js) | 3000 | Live video, RestScore, thought ticker, ledger |
-| **Policy API** | `server/` (FastAPI) | 8000 | Care loop, ledger, camera capture, proxies fatigue data to the UI |
+| Service               | Path                                 | Port | Role                                                                               |
+| --------------------- | ------------------------------------ | ---- | ---------------------------------------------------------------------------------- |
+| **Booth UI**          | `client/` (Next.js)                  | 3000 | Live video, RestScore, thought ticker, ledger                                      |
+| **Policy API**        | `server/` (FastAPI)                  | 8000 | Care loop, ledger, camera capture, proxies fatigue data to the UI                  |
 | **Fatigue detection** | `fatigue_fastapi_service/` (FastAPI) | 8001 | Real YOLOv8-Face + MediaPipe perception (EAR/MAR/PERCLOS/head-pose) over WebSocket |
 
 `server/` streams real frames to the fatigue service by default
@@ -208,24 +208,24 @@ Invoke-WebRequest http://localhost:3000 -UseBasicParsing
 
 ### API endpoints (C5 contract)
 
-| Endpoint | Method | Purpose |
-| --- | --- | --- |
-| `/video_feed/pov` | GET | Raw camera MJPEG |
-| `/video_feed/annotated` | GET | Annotated fatigue overlay MJPEG |
-| `/text_stream/thoughts` | GET | SSE stream of policy events |
-| `/api/score` | GET | Latest fatigue frame JSON |
-| `/api/plan` | GET | Scheduler route with ETAs |
-| `/api/ledger` | GET | Nap timeline |
-| `/api/leaderboard` | GET | Fatigue leaderboard |
-| `/api/adopt` | POST | Adoption form |
-| `/api/capture` | POST | Capture session upload |
-| `/api/outcome` | POST | Post-wake survey |
-| `/api/robot/status` | GET | Robot connectivity, behavior, map, and bridge state |
-| `/api/form/schema` | GET | Intake questionnaire + `session_id` |
-| `/api/form/responses` | POST | Submit public nap intake |
-| `/api/form/responses/latest` | GET | Latest intake rows for booth |
-| `/api/form/responses/pending-escort` | GET | Visitors waiting for escort |
-| `/api/form/responses/{id}` | PATCH | Acknowledge, escort, or decline |
+| Endpoint                             | Method | Purpose                                             |
+| ------------------------------------ | ------ | --------------------------------------------------- |
+| `/video_feed/pov`                    | GET    | Raw camera MJPEG                                    |
+| `/video_feed/annotated`              | GET    | Annotated fatigue overlay MJPEG                     |
+| `/text_stream/thoughts`              | GET    | SSE stream of policy events                         |
+| `/api/score`                         | GET    | Latest fatigue frame JSON                           |
+| `/api/plan`                          | GET    | Scheduler route with ETAs                           |
+| `/api/ledger`                        | GET    | Nap timeline                                        |
+| `/api/leaderboard`                   | GET    | Fatigue leaderboard                                 |
+| `/api/adopt`                         | POST   | Adoption form                                       |
+| `/api/capture`                       | POST   | Capture session upload                              |
+| `/api/outcome`                       | POST   | Post-wake survey                                    |
+| `/api/robot/status`                  | GET    | Robot connectivity, behavior, map, and bridge state |
+| `/api/form/schema`                   | GET    | Intake questionnaire + `session_id`                 |
+| `/api/form/responses`                | POST   | Submit public nap intake                            |
+| `/api/form/responses/latest`         | GET    | Latest intake rows for booth                        |
+| `/api/form/responses/pending-escort` | GET    | Visitors waiting for escort                         |
+| `/api/form/responses/{id}`           | PATCH  | Acknowledge, escort, or decline                     |
 
 Stub implementations remain available with `DEMO_MODE=stub` and
 `SCORER_BACKEND=stub`.
