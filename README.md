@@ -157,6 +157,23 @@ cd insta360_bridge
 
 See [`insta360_bridge/README.md`](insta360_bridge/README.md) for camera setup.
 
+Terminal 0b — RTMP ingest + HLS (ports 1935 / 8080), optional for the booth and
+operator **RTMP** video toggle (and `CAMERA_SOURCE=rtmp`):
+
+```powershell
+# Starts nginx-rtmp from docker-compose.yml (uses nginx-rtmp.conf).
+docker compose up -d
+
+# Publish a stream (OBS server URL, or ffmpeg):
+#   Server: rtmp://localhost:1935/live   Key: stream
+ffmpeg -re -i input.mp4 -c:v libx264 -f flv rtmp://localhost:1935/live/stream
+```
+
+Play URL is `http://localhost:8080/hls/stream.m3u8`. The booth `VideoFeed` and
+operator console expose it via the **RTMP** button; browser playback needs no
+`CAMERA_SOURCE` change. To also feed the fatigue pipeline from RTMP, set
+`CAMERA_SOURCE=rtmp` (and `RTMP_HLS_URL` if you changed the host/port).
+
 Terminal 1 — fatigue detection service (port 8001), only needed for `SCORER_BACKEND=live`:
 
 ```powershell
@@ -212,6 +229,7 @@ Invoke-WebRequest http://localhost:3000 -UseBasicParsing
 | ------------------------------------ | ------ | --------------------------------------------------- |
 | `/video_feed/pov`                    | GET    | Raw camera MJPEG                                    |
 | `/video_feed/annotated`              | GET    | Annotated fatigue overlay MJPEG                     |
+| `/video_feed/robot`                  | GET    | Go2 first-person MJPEG proxy (`ROBOT_CAMERA_URL`)   |
 | `/text_stream/thoughts`              | GET    | SSE stream of policy events                         |
 | `/api/score`                         | GET    | Latest fatigue frame JSON                           |
 | `/api/plan`                          | GET    | Scheduler route with ETAs                           |

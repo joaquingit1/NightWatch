@@ -1,0 +1,21 @@
+version: "3"
+
+# RTMP ingest + HLS playback for booth / operator Live toggle.
+#
+# Publish (OBS or ffmpeg):
+#   rtmp://localhost:1935/live/stream
+#   ffmpeg -re -i input.mp4 -c:v libx264 -f flv rtmp://localhost:1935/live/stream
+#
+# Play (browser HLS):
+#   http://localhost:8080/hls/stream.m3u8
+
+services:
+  nginx-rtmp:
+    image: tiangolo/nginx-rtmp
+    container_name: nginx-rtmp
+    ports:
+      - "1935:1935"
+      - "8080:80"
+    volumes:
+      - ./nginx-rtmp.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped

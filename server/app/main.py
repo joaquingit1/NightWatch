@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI):
         score_provider=app.state.score_source.latest,
         robot_camera_url=settings.robot_camera_url,
         insta360_mjpeg_url=settings.insta360_mjpeg_url,
+        rtmp_hls_url=settings.rtmp_hls_url,
     )
     app.state.ledger = LedgerMemory()
     app.state.intake_db = IntakeDatabase(settings.intake_db_path)

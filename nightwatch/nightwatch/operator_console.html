@@ -169,7 +169,8 @@
       overflow: hidden;
       min-height: 260px;
     }
-    .video-wrap img { width: 100%; min-height: 260px; max-height: 62vh; display: block; aspect-ratio: 16/9; object-fit: contain; }
+    .video-wrap img,
+    .video-wrap video { width: 100%; min-height: 260px; max-height: 62vh; display: block; aspect-ratio: 16/9; object-fit: contain; }
     .video-wrap::before,
     .video-wrap::after {
       content: "";
@@ -366,10 +367,13 @@
           <div class="row">
             <button id="analysisMode" class="active" onclick="setVideoMode('analysis')" data-i18n="video.analysis">分析</button>
             <button id="rawMode" onclick="setVideoMode('raw')" data-i18n="video.raw">原始</button>
+            <button id="robotMode" onclick="setVideoMode('robot')" data-i18n="video.robot">机器人</button>
+            <button id="rtmpMode" onclick="setVideoMode('rtmp')" data-i18n="video.rtmp">RTMP</button>
           </div>
         </div>
         <div class="video-wrap">
           <img id="robotVideo" alt="机器人相机视频" data-i18n-alt="video.alt">
+          <video id="rtmpVideo" muted autoplay playsinline style="display:none;background:#000;"></video>
           <div id="videoOverlay" class="overlay"></div>
         </div>
         <div class="metrics">
@@ -471,13 +475,18 @@
     <button class="primary" onclick="resolveMapPrompt(false)"><span data-i18n="dialog.cruise">现在开始巡航</span></button>
   </div>
 </dialog>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"></script>
 <script>
   const API_BASE = 'http://127.0.0.1:8000';
   const RAW_VIDEO = '/video_feed/camera';
   const ANALYSIS_VIDEO = API_BASE + '/video_feed/annotated';
+  const ROBOT_VIDEO = API_BASE + '/video_feed/robot';
+  const RTMP_HLS_URL = 'http://localhost:8080/hls/stream.m3u8';
   const statusEl = document.getElementById('status');
   const video = document.getElementById('robotVideo');
+  const rtmpVideo = document.getElementById('rtmpVideo');
   const videoOverlay = document.getElementById('videoOverlay');
+  let rtmpHls = null;
   const mapDialog = document.getElementById('mapDialog');
   const LANGUAGE_STORAGE_KEY = 'nightwatch.operator.language';
   const translations = {
@@ -491,7 +500,10 @@
       'video.heading': '机器人视野 / 疲劳指数',
       'video.analysis': '分析',
       'video.raw': '原始',
+      'video.robot': '机器人',
+      'video.rtmp': 'RTMP',
       'video.alt': '机器人相机视频',
+      'overlay.rtmpWaiting': '等待 RTMP 推流…',
       'metric.mission': '任务模式',
       'metric.control': '控制模式',
       'metric.behavior': '当前行为',
@@ -665,7 +677,10 @@
       'video.heading': 'ROBOT VIEW / FATIGUE INDEX',
       'video.analysis': 'Analysis',
       'video.raw': 'Raw',
+      'video.robot': 'Robot',
+      'video.rtmp': 'RTMP',
       'video.alt': 'Robot camera video',
+      'overlay.rtmpWaiting': 'Waiting for RTMP publisher…',
       'metric.mission': 'Mission mode',
       'metric.control': 'Control mode',
       'metric.behavior': 'Current behavior',
@@ -1046,18 +1061,87 @@
     await act('map_prompt', {stay_exploring: stay});
     mapDialog.close(); mapPromptSeen = false;
   }
+  function stopRtmpPlayback() {
+    if (rtmpHls) {
+      rtmpHls.destroy();
+      rtmpHls = null;
+    }
+    if (rtmpVideo) {
+      rtmpVideo.pause();
+      rtmpVideo.removeAttribute('src');
+      rtmpVideo.load();
+      rtmpVideo.style.display = 'none';
+    }
+    if (video) video.style.display = '';
+  }
+
+  function startRtmpPlayback() {
+    if (!rtmpVideo) return;
+    video.style.display = 'none';
+    rtmpVideo.style.display = 'block';
+    videoOverlay.style.display = 'block';
+    videoOverlay.textContent = t('overlay.rtmpWaiting');
+
+    const markLive = () => { videoOverlay.style.display = 'none'; };
+    const markWaiting = () => {
+      videoOverlay.style.display = 'block';
+      videoOverlay.textContent = t('overlay.rtmpWaiting');
+    };
+    rtmpVideo.onplaying = markLive;
+    rtmpVideo.onwaiting = markWaiting;
+    rtmpVideo.onstalled = markWaiting;
+    rtmpVideo.onerror = markWaiting;
+
+    if (window.Hls && window.Hls.isSupported()) {
+      rtmpHls = new window.Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        manifestLoadingMaxRetry: 9999,
+        manifestLoadingRetryDelay: 2000,
+      });
+      rtmpHls.loadSource(RTMP_HLS_URL);
+      rtmpHls.attachMedia(rtmpVideo);
+      rtmpHls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        rtmpVideo.play().catch(() => undefined);
+      });
+      rtmpHls.on(window.Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) markWaiting();
+      });
+    } else if (rtmpVideo.canPlayType('application/vnd.apple.mpegurl')) {
+      rtmpVideo.src = RTMP_HLS_URL;
+      rtmpVideo.play().catch(() => undefined);
+    } else {
+      markWaiting();
+    }
+  }
+
   function setVideoMode(mode) {
     videoMode = mode;
     analysisFallback = false;
     document.getElementById('analysisMode').classList.toggle('active', mode === 'analysis');
     document.getElementById('rawMode').classList.toggle('active', mode === 'raw');
+    document.getElementById('robotMode').classList.toggle('active', mode === 'robot');
+    document.getElementById('rtmpMode').classList.toggle('active', mode === 'rtmp');
+
+    if (mode === 'rtmp') {
+      video.onerror = null;
+      video.removeAttribute('src');
+      startRtmpPlayback();
+      return;
+    }
+
+    stopRtmpPlayback();
     video.onerror = mode === 'analysis' ? () => {
       video.onerror = null; video.src = RAW_VIDEO;
       analysisFallback = true;
       videoOverlay.style.display = 'block';
       videoOverlay.textContent = t('overlay.modelOffline');
     } : null;
-    video.src = (mode === 'analysis' ? ANALYSIS_VIDEO : RAW_VIDEO) + '?t=' + Date.now();
+    const src =
+      mode === 'analysis' ? ANALYSIS_VIDEO :
+      mode === 'robot' ? ROBOT_VIDEO :
+      RAW_VIDEO;
+    video.src = src + '?t=' + Date.now();
   }
   function movementVector() {
     const active = new Set([...movementKeys, ...movementButtons]);

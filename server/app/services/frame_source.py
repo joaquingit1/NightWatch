@@ -373,6 +373,7 @@ def create_frame_source(
     score_provider: Callable[[], FatigueFrame] | None = None,
     robot_camera_url: str | None = None,
     insta360_mjpeg_url: str | None = None,
+    rtmp_hls_url: str | None = None,
 ) -> FrameSource:
     if camera_source == "stub":
         return StubFrameSource(score_provider=score_provider)
@@ -385,6 +386,11 @@ def create_frame_source(
         if not robot_camera_url:
             raise ValueError("robot_camera_url is required when CAMERA_SOURCE=robot")
         return MjpegFrameSource(url=robot_camera_url, score_provider=score_provider)
+
+    # OpenCV can pull HLS the same way it pulls RTSP (needs ffmpeg-backed build).
+    if camera_source == "rtmp":
+        url = rtmp_hls_url or "http://localhost:8080/hls/stream.m3u8"
+        return WebcamFrameSource(device=url, score_provider=score_provider)
 
     device: int | str
     if camera_source == "webcam":

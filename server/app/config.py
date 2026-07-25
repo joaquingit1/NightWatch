@@ -28,6 +28,7 @@ class Settings:
     robot_status_url: str
     insta360_mjpeg_url: str
     insta360_serial: str | None
+    rtmp_hls_url: str
     robot_assessment_url: str
     robot_mcp_url: str
     robot_bridge_enabled: bool
@@ -79,6 +80,9 @@ def load_settings() -> Settings:
             "INSTA360_MJPEG_URL", "http://127.0.0.1:5556/video"
         ),
         insta360_serial=os.getenv("INSTA360_SERIAL") or None,
+        rtmp_hls_url=os.getenv(
+            "RTMP_HLS_URL", "http://localhost:8080/hls/stream.m3u8"
+        ),
         robot_assessment_url=os.getenv(
             "ROBOT_ASSESSMENT_URL", "http://localhost:5555/operator/assessment"
         ),
