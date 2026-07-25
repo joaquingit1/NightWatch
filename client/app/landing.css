@@ -1,0 +1,628 @@
+.landing-page {
+  --ink: #0a0a0a;
+  --paper: #f2efe7;
+  --blue: #173ed1;
+  --orange: #ff4b13;
+  --surface: #f2efe7;
+  --surface-raised: #e8e3d4;
+  --text: #0a0a0a;
+  --text-muted: rgba(10, 10, 10, 0.62);
+  --border: rgba(10, 10, 10, 0.14);
+  --shadow: #0a0a0a;
+
+  /* Deliberately no overflow-x here: setting only overflow-x on this
+     ancestor makes the browser auto-imply overflow-y: auto (CSS spec),
+     which creates an extra scroll container and breaks position:sticky
+     for the pinned 3D visual column below. Horizontal clipping is
+     already handled by `body { overflow-x: hidden; }` in globals.css. */
+  min-height: 100dvh;
+  color: var(--text);
+  background: var(--surface);
+  font-family: var(--font-mono), "Courier New", monospace;
+}
+
+.landing-page *,
+.landing-page *::before,
+.landing-page *::after {
+  box-sizing: border-box;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Hero */
+
+.landing-hero {
+  position: relative;
+}
+
+.landing-pinned {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  column-gap: clamp(16px, 3vw, 48px);
+}
+
+.landing-pinned-content {
+  min-width: 0;
+}
+
+/* This wrapper stretches to match the height of the (taller) content
+   column, so the sticky inner element below has room to stay pinned
+   for the full scroll distance of Hero + The Idea + What You Will See. */
+.landing-pinned-visual {
+  position: relative;
+}
+
+.landing-pinned-visual-inner {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.landing-pinned-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.landing-pinned-canvas canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+@media (max-width: 900px) {
+  .landing-pinned {
+    grid-template-columns: 1fr;
+    row-gap: 0;
+  }
+
+  .landing-pinned-visual {
+    order: -1;
+  }
+
+  .landing-pinned-visual-inner {
+    position: static;
+    height: 62vh;
+  }
+
+  .landing-hero-content {
+    min-height: 0;
+    justify-content: flex-start;
+    padding-top: clamp(28px, 6vw, 44px);
+  }
+}
+
+.landing-scene-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text);
+  background: var(--surface);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  pointer-events: none;
+}
+
+.landing-loader {
+  width: 44px;
+  height: 44px;
+  border: 4px solid var(--text);
+  border-top-color: var(--orange);
+  border-right-color: var(--blue);
+  animation: landing-spin 850ms linear infinite;
+}
+
+.landing-hero-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.16;
+  mix-blend-mode: multiply;
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(10, 10, 10, 0.045) 4px),
+    repeating-linear-gradient(90deg, transparent 0 5px, rgba(10, 10, 10, 0.025) 6px);
+}
+
+.landing-hero-content {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
+  justify-content: center;
+  width: min(100%, 1240px);
+  margin: 0 auto;
+  padding: clamp(28px, 5vw, 68px);
+}
+
+.landing-brand {
+  width: max-content;
+}
+
+.landing-brand-zh {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display), Impact, "Arial Black", "PingFang SC", sans-serif;
+  font-size: clamp(72px, 12vw, 148px);
+  font-weight: 400;
+  line-height: 0.78;
+  letter-spacing: -0.02em;
+  transform: scaleX(1.05);
+  transform-origin: left center;
+  text-wrap: balance;
+}
+
+.landing-brand-en {
+  margin: clamp(14px, 2vw, 24px) 0 0;
+  font-family: var(--font-display), Impact, "Arial Black", sans-serif;
+  font-size: clamp(28px, 4.2vw, 56px);
+  font-weight: 400;
+  line-height: 0.9;
+  letter-spacing: 0.045em;
+  word-spacing: 0.22em;
+}
+
+.landing-hero-copy {
+  max-width: 520px;
+  margin-top: clamp(24px, 4vh, 40px);
+}
+
+.landing-hero-tagline {
+  margin: 0;
+  font-family: var(--font-display), "Arial Black", "PingFang SC", sans-serif;
+  font-size: clamp(22px, 2.8vw, 36px);
+  font-weight: 400;
+  line-height: 1.12;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
+}
+
+.landing-hero-tagline strong {
+  color: var(--orange);
+}
+
+.landing-hero-sub {
+  margin: 14px 0 0;
+  max-width: 52ch;
+  color: var(--text-muted);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: clamp(12px, 1.4vw, 15px);
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: -0.02em;
+}
+
+.landing-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: clamp(28px, 4vh, 40px);
+}
+
+.landing-action {
+  display: inline-flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 22px;
+  border: 3px solid var(--text);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--shadow);
+  color: white;
+  font-family: var(--font-display), Impact, "Arial Black", "PingFang SC", sans-serif;
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.landing-action:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 10px 10px 0 var(--shadow);
+}
+
+.landing-action:active {
+  transform: translate(5px, 5px);
+  box-shadow: 3px 3px 0 var(--shadow);
+}
+
+.landing-action:focus-visible,
+.landing-action-tertiary:focus-visible {
+  outline: 4px solid var(--orange);
+  outline-offset: 5px;
+}
+
+.landing-action--primary {
+  background: var(--orange);
+}
+
+.landing-action--secondary {
+  background: var(--blue);
+}
+
+.landing-action--ghost {
+  color: var(--text);
+  background: transparent;
+  box-shadow: 6px 6px 0 var(--shadow);
+}
+
+.landing-action-tertiary {
+  margin-left: 12px;
+  padding: 8px 4px;
+  color: var(--text-muted);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: color 150ms ease;
+}
+
+.landing-action-tertiary:hover {
+  color: var(--text);
+}
+
+.landing-hero-spec {
+  margin-top: clamp(36px, 6vh, 64px);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: clamp(11px, 1.2vw, 14px);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.landing-hero-spec p {
+  margin: 0;
+}
+
+.landing-hero-spec span {
+  display: block;
+  width: 56px;
+  height: 8px;
+  margin: 16px 0 20px;
+  background: var(--orange);
+}
+
+.landing-target {
+  position: absolute;
+  z-index: 2;
+  width: 42px;
+  height: 42px;
+  border: 2px solid var(--blue);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.landing-target::before,
+.landing-target::after {
+  content: "";
+  position: absolute;
+  background: var(--blue);
+}
+
+.landing-target::before {
+  left: 50%;
+  top: -20px;
+  width: 2px;
+  height: 80px;
+  transform: translateX(-50%);
+}
+
+.landing-target::after {
+  left: -20px;
+  top: 50%;
+  width: 80px;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
+.landing-target--top {
+  top: 8%;
+  right: 14%;
+}
+
+.landing-target--bottom {
+  right: 10%;
+  bottom: 10%;
+}
+
+/* Sections */
+
+.landing-section {
+  position: relative;
+  z-index: 4;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.landing-section-inner {
+  width: min(100%, 1240px);
+  margin: 0 auto;
+  padding: clamp(56px, 8vw, 96px) clamp(22px, 5vw, 68px);
+}
+
+.landing-kicker {
+  margin: 0 0 18px;
+  color: var(--blue);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.landing-heading {
+  margin: 0;
+  max-width: 20ch;
+  font-family: var(--font-heading), "Plus Jakarta Sans", "Arial Black", "PingFang SC", sans-serif;
+  font-size: clamp(32px, 4.4vw, 58px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+/* Story */
+
+.landing-story {
+  background: var(--surface-raised);
+}
+
+.landing-story-grid {
+  display: grid;
+  gap: 24px;
+  margin-top: 32px;
+  max-width: 72ch;
+}
+
+.landing-story-grid p {
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: clamp(14px, 1.6vw, 17px);
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+/* Timeline */
+
+.landing-timeline-list {
+  display: grid;
+  gap: 0;
+  margin: 40px 0 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+  border: 3px solid var(--text);
+  background: var(--surface);
+  box-shadow: 12px 12px 0 var(--shadow);
+}
+
+.landing-timeline-list li {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) 1fr;
+  gap: clamp(20px, 3vw, 40px);
+  align-items: center;
+  padding: clamp(20px, 2.8vw, 30px) clamp(22px, 3vw, 32px);
+  border-bottom: 1px solid var(--border);
+}
+
+.landing-timeline-list li:last-child {
+  border-bottom: 0;
+}
+
+.landing-step-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-self: center;
+  padding: 14px 18px;
+  background: rgba(23, 62, 209, 0.07);
+}
+
+.landing-step-label span {
+  color: var(--blue);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  opacity: 0.75;
+}
+
+.landing-step-label strong {
+  font-family: var(--font-heading), "Plus Jakarta Sans", "Arial Black", sans-serif;
+  font-size: clamp(20px, 2.2vw, 26px);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--blue);
+}
+
+.landing-timeline-list p {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--text-muted);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+/* Signals */
+
+.landing-signals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  margin-top: 36px;
+}
+
+.landing-signal-card {
+  padding: clamp(20px, 2.5vw, 28px);
+  border: 3px solid var(--text);
+  background: var(--surface-raised);
+  box-shadow: 8px 8px 0 var(--shadow);
+}
+
+.landing-signal-card h3 {
+  margin: 0;
+  font-family: var(--font-heading), "Plus Jakarta Sans", "Arial Black", "PingFang SC", sans-serif;
+  font-size: clamp(20px, 2.2vw, 26px);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.landing-signal-card p {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.landing-signals-note {
+  margin: 32px 0 0;
+  max-width: 62ch;
+  color: var(--text-muted);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+/* Tech */
+
+.landing-tech {
+  background: var(--surface-raised);
+}
+
+.landing-tech-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing-tech-list li {
+  padding: 10px 14px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Footer */
+
+.landing-footer {
+  border-top: 3px solid var(--text);
+  background: var(--ink);
+}
+
+.landing-footer-inner {
+  width: min(100%, 1240px);
+  margin: 0 auto;
+  padding: clamp(56px, 8vw, 88px) clamp(22px, 5vw, 68px);
+}
+
+.landing-footer-heading {
+  margin: 0;
+  max-width: 18ch;
+  color: var(--paper);
+  font-family: var(--font-heading), "Plus Jakarta Sans", "Arial Black", "PingFang SC", sans-serif;
+  font-size: clamp(32px, 4.6vw, 60px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.landing-footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 32px;
+}
+
+.landing-footer-credit {
+  margin: 36px 0 0;
+  color: rgba(242, 239, 231, 0.5);
+  font-family: var(--font-mono), "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+@keyframes landing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 720px) {
+  .landing-brand-zh {
+    font-size: clamp(64px, 20vw, 108px);
+  }
+
+  .landing-timeline-list li {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .landing-step-label {
+    flex-direction: row;
+    align-items: baseline;
+    align-self: start;
+    width: max-content;
+  }
+
+  .landing-hero-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .landing-action {
+    width: 100%;
+  }
+
+  .landing-target {
+    transform: scale(0.72);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-loader {
+    animation: none !important;
+  }
+}
