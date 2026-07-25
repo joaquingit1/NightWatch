@@ -136,10 +136,13 @@ class AnalyzerSettings:
             detection_confidence=_env_float(
                 "FATIGUE_DETECTION_CONFIDENCE", 0.35
             ),
-            max_faces=_env_int("FATIGUE_MAX_FACES", 20),
-            minimum_face_size=_env_int("FATIGUE_MINIMUM_FACE_SIZE", 30),
+            # During robot observations the selected visitor is centered and
+            # should dominate the frame. Capping sequential MediaPipe work
+            # prevents a crowded booth background from multiplying latency.
+            max_faces=_env_int("FATIGUE_MAX_FACES", 6),
+            minimum_face_size=_env_int("FATIGUE_MINIMUM_FACE_SIZE", 20),
             face_padding=_env_float("FATIGUE_FACE_PADDING", 0.15),
-            calibration_frames=_env_int("FATIGUE_CALIBRATION_FRAMES", 20),
+            calibration_frames=_env_int("FATIGUE_CALIBRATION_FRAMES", 6),
             maximum_missing_seconds=_env_float(
                 "FATIGUE_MAXIMUM_MISSING_SECONDS", 1.5
             ),

@@ -14,33 +14,51 @@ class LedgerMemory:
         self.naps: list[dict[str, Any]] = []
         self.events: list[dict[str, Any]] = []
         self.passes: list[dict[str, Any]] = []
-        self._seed()
+        self.peak_scores: dict[str, float] = {}
 
-    def _seed(self) -> None:
-        self.persons["stub-person-01"] = {
-            "person_id": "stub-person-01",
-            "name_alias": "夜猫子",
-            "adopted_ts": time.time() - 3600,
+    def observe_score(self, person_id: str, score: float) -> None:
+        current = self.peak_scores.get(person_id, 0.0)
+        if score > current:
+            self.peak_scores[person_id] = score
+
+    def register_intake(
+        self,
+        *,
+        session_id: str,
+        name_alias: str | None,
+        tiredness: str,
+        wants_escort: bool,
+    ) -> None:
+        alias = name_alias or f"访客 {session_id[:6]}"
+        self.persons[session_id] = {
+            "person_id": session_id,
+            "name_alias": alias,
+            "adopted_ts": time.time(),
             "baseline_json": "{}",
+            "source": "intake",
         }
-        self.record_event(
-            PolicyEvent(
-                ts=time.time() - 300,
-                state="NAP_REGISTERED",
-                target_person="stub-person-01",
-                utterance="nap_registered_01",
-                detail="首次午睡登记 | First nap registered",
+        baseline = 62.0 if tiredness == "tired" else 28.0
+        self.peak_scores[session_id] = max(self.peak_scores.get(session_id, 0.0), baseline)
+        if wants_escort:
+            self.record_event(
+                PolicyEvent(
+                    ts=time.time(),
+                    state="ESCORT",
+                    target_person=session_id,
+                    utterance="escort_01",
+                    detail=f"{alias} 请求护送休息 | {alias} requested escort to rest area",
+                )
             )
-        )
-        self.record_event(
-            PolicyEvent(
-                ts=time.time() - 120,
-                state="PASS_CHECK",
-                target_person="stub-person-01",
-                utterance=None,
-                detail="呼吸正常，物品未动 | Breathing ok, belongings untouched",
+        elif tiredness == "tired":
+            self.record_event(
+                PolicyEvent(
+                    ts=time.time(),
+                    state="TRIAGE",
+                    target_person=session_id,
+                    utterance="triage_01",
+                    detail=f"{alias} 自报疲劳 | {alias} self-reported tiredness",
+                )
             )
-        )
 
     def record_event(self, event: PolicyEvent) -> None:
         self.events.append(
@@ -63,6 +81,14 @@ class LedgerMemory:
                     "outcome": None,
                 }
             )
+        if event.state == "PASS_CHECK" and event.target_person:
+            self.passes.append(
+                {
+                    "person_id": event.target_person,
+                    "ts": event.ts,
+                    "detail": event.detail,
+                }
+            )
 
     def record_adopt(self, payload: dict[str, Any]) -> dict[str, Any]:
         person_id = payload.get("person_id") or str(uuid.uuid4())
@@ -72,6 +98,7 @@ class LedgerMemory:
             "name_alias": alias,
             "adopted_ts": time.time(),
             "baseline_json": "{}",
+            "source": "adopt",
         }
         self.record_event(
             PolicyEvent(
@@ -116,35 +143,107 @@ class LedgerMemory:
         return {"ok": True, "outcome": outcome}
 
     def get_ledger(self) -> dict[str, Any]:
+        now = time.time()
+        active_naps: list[dict[str, Any]] = []
+        for nap in self.naps:
+            if nap.get("woke_ts") is not None:
+                continue
+            person = self.persons.get(nap["person_id"], {})
+            alias = person.get("name_alias")
+            if not alias:
+                person_id = nap["person_id"]
+                alias = (
+                    f"访客 {person_id.split('-', 1)[-1]}"
+                    if person_id.startswith("track-")
+                    else f"访客 {person_id[:6]}"
+                )
+            active_naps.append(
+                {
+                    "nap_id": nap["nap_id"],
+                    "person_id": nap["person_id"],
+                    "name_alias": alias,
+                    "start_ts": nap["start_ts"],
+                    "wake_deadline": nap["wake_deadline"],
+                    "remaining_s": max(0, round(nap["wake_deadline"] - now)),
+                }
+            )
         return {
             "events": list(self.events),
             "nap_count": len(self.naps),
             "pass_count": len(self.passes),
+            "active_naps": active_naps,
         }
 
     def get_leaderboard(self) -> dict[str, Any]:
-        entries = []
-        for person in self.persons.values():
-            person_naps = [n for n in self.naps if n["person_id"] == person["person_id"]]
+        entries: list[dict[str, Any]] = []
+        person_ids = set(self.peak_scores) | set(self.persons)
+        for person_id in person_ids:
+            peak = self.peak_scores.get(person_id, 0.0)
+            if peak <= 0:
+                continue
+            person = self.persons.get(person_id, {})
+            alias = person.get("name_alias")
+            if not alias:
+                if person_id.startswith("track-"):
+                    alias = f"访客 {person_id.split('-', 1)[-1]}"
+                else:
+                    alias = f"访客 {person_id[:6]}"
+            nap_count = len([n for n in self.naps if n["person_id"] == person_id])
             entries.append(
                 {
-                    "name_alias": person["name_alias"],
-                    "peak_score": 74,
-                    "nap_count": len(person_naps),
+                    "name_alias": alias,
+                    "peak_score": round(peak),
+                    "nap_count": nap_count,
                 }
             )
-        entries.sort(key=lambda e: e["peak_score"], reverse=True)
-        return {"entries": entries}
+        entries.sort(key=lambda entry: entry["peak_score"], reverse=True)
+        return {"entries": entries[:20]}
 
-    def get_plan(self) -> dict[str, Any]:
-        return {
-            "stops": [
-                {"tag": "nap_zone", "eta_s": 45, "kind": "nap"},
-                {"tag": "patrol_2", "eta_s": 120, "kind": "patrol"},
-                {"tag": "home", "eta_s": 210, "kind": "home"},
-            ],
-            "updated_ts": time.time(),
-        }
+    def build_plan(self, pending_escorts: list[Any]) -> dict[str, Any]:
+        stops: list[dict[str, Any]] = []
+        eta = 20.0
+
+        for escort in pending_escorts:
+            alias = getattr(escort, "name_alias", None) or f"guest-{escort.session_id[:6]}"
+            stops.append(
+                {
+                    "tag": f"rest_area:{alias}",
+                    "eta_s": eta,
+                    "kind": "nap",
+                }
+            )
+            eta += 75.0
+
+        active_naps = [nap for nap in self.naps if nap.get("woke_ts") is None]
+        for nap in active_naps:
+            person = self.persons.get(nap["person_id"], {})
+            alias = person.get("name_alias") or nap["person_id"][:8]
+            stops.append(
+                {
+                    "tag": f"round:{alias}",
+                    "eta_s": eta,
+                    "kind": "patrol",
+                }
+            )
+            eta += 60.0
+
+        if not stops:
+            stops.append(
+                {
+                    "tag": "booth_patrol",
+                    "eta_s": 15.0,
+                    "kind": "patrol",
+                }
+            )
+
+        stops.append(
+            {
+                "tag": "booth_home",
+                "eta_s": eta + 90.0,
+                "kind": "home",
+            }
+        )
+        return {"stops": stops, "updated_ts": time.time()}
 
     def capture_record_dict(self, record: CaptureRecord) -> dict[str, Any]:
         return asdict(record)

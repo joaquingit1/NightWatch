@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -16,7 +17,7 @@ from app.services.scorer import ScoreSource
 logger = logging.getLogger("nightwatch.live_scorer")
 
 
-def _idle_frame(ts: float) -> FatigueFrame:
+def _idle_frame(ts: float, *, source_status: str = "connecting") -> FatigueFrame:
     """Returned before the first real result, or when no face is detected."""
     return FatigueFrame(
         ts=ts,
@@ -37,49 +38,152 @@ def _idle_frame(ts: float) -> FatigueFrame:
         ),
         calib_state="uncalibrated",
         scorer="fatigue_fastapi_service",
+        source_status=source_status,
+    )
+
+
+def _map_person(
+    person: dict,
+    *,
+    ts: float,
+    processing_ms: float,
+    sequence: int,
+    model_version: str,
+    frame_width: int,
+    frame_height: int,
+) -> FatigueFrame:
+    state = person.get("state") or {}
+    bbox = person.get("bbox") or {}
+    calibrating = bool(person.get("calibrating", False))
+    landmarks_detected = bool(person.get("landmarks_detected", False))
+    head_pitch = state.get("head_pitch")
+    attention = person.get("attention") or {}
+
+    confidence = min(1.0, max(0.0, float(bbox.get("confidence", 0.0))))
+    x1 = int(bbox.get("x1", 0))
+    y1 = int(bbox.get("y1", 0))
+    x2 = int(bbox.get("x2", 0))
+    y2 = int(bbox.get("y2", 0))
+    face_area_ratio = (
+        max(0, x2 - x1)
+        * max(0, y2 - y1)
+        / max(1, frame_width * frame_height)
+    )
+    quality = person.get("quality")
+    if quality is None:
+        size_quality = min(1.0, (face_area_ratio / 0.02) ** 0.5)
+        quality = confidence * size_quality * (1.0 if landmarks_detected else 0.25)
+    quality = min(1.0, max(0.0, float(quality)))
+
+    if not landmarks_detected:
+        calib_state = "uncalibrated"
+    elif calibrating:
+        calib_state = "quick"
+    else:
+        calib_state = "full"
+
+    slump_deg = 0.0
+    if head_pitch is not None and head_pitch < 0:
+        slump_deg = abs(float(head_pitch))
+
+    return FatigueFrame(
+        ts=ts,
+        person_id=f"track-{person.get('track_id', 0)}",
+        bbox=(x1, y1, x2, y2),
+        score=float(state.get("fatigue_score", 0.0)),
+        confidence=confidence,
+        quality=quality,
+        factors=FatigueFactors(
+            perclos=float(state.get("perclos", 0.0)),
+            blink_ms_p50=float(state.get("blink_duration_ms_p50", 0.0)),
+            blink_ms_p90=float(state.get("blink_duration_ms_p90", 0.0)),
+            nod_count=int(state.get("nod_count", 0)),
+            yawn_count=int(state.get("yawn_count", 0)),
+            slump_deg=slump_deg,
+            eye_cnn_perclos=-1.0,
+            movement_entropy=float(state.get("movement_entropy", 0.0)),
+            sedentary_hours=float(state.get("sedentary_hours", 0.0)),
+        ),
+        calib_state=calib_state,
+        scorer="fatigue_fastapi_service",
+        status=str(person.get("status", "CALIBRATING")),
+        calibration_progress=min(
+            1.0, max(0.0, float(person.get("calibration_progress", 0.0)))
+        ),
+        landmarks_detected=landmarks_detected,
+        model_version=model_version,
+        processing_ms=processing_ms,
+        sequence=sequence,
+        source_status="live",
+        looking_at_camera=bool(person.get("looking_at_camera", False)),
+        head_pitch=(
+            float(attention["head_pitch"])
+            if attention.get("head_pitch") is not None
+            else None
+        ),
+        head_yaw=(
+            float(attention["head_yaw"])
+            if attention.get("head_yaw") is not None
+            else None
+        ),
+        gaze_horizontal=(
+            float(attention["gaze_horizontal"])
+            if attention.get("gaze_horizontal") is not None
+            else None
+        ),
+        gaze_vertical=(
+            float(attention["gaze_vertical"])
+            if attention.get("gaze_vertical") is not None
+            else None
+        ),
+        frame_width=frame_width,
+        frame_height=frame_height,
     )
 
 
 def _map_result(payload: dict) -> FatigueFrame:
     ts = time.time()
     people = payload.get("people") or []
+    processing_ms = float(payload.get("processing_ms", 0.0))
+    sequence = int(payload.get("sequence", -1))
+    model = payload.get("model") or {}
+    model_version = str(model.get("version", "fatigue-yolov8face-mediapipe-v1"))
+    frame_info = payload.get("frame") or {}
+    frame_width = int(frame_info.get("width", 0))
+    frame_height = int(frame_info.get("height", 0))
     if not people:
-        return _idle_frame(ts)
+        frame = _idle_frame(ts, source_status="live")
+        frame.processing_ms = processing_ms
+        frame.sequence = sequence
+        frame.model_version = model_version
+        return frame
 
+    tracked = [
+        _map_person(
+            person,
+            ts=ts,
+            processing_ms=processing_ms,
+            sequence=sequence,
+            model_version=model_version,
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
+        for person in people
+    ]
+    # The large score card follows the strongest *usable* signal, while every
+    # stable model track remains present in `people` and on the video overlay.
     primary = max(
-        people,
-        key=lambda person: (person.get("state") or {}).get("fatigue_score", 0.0),
-    )
-    state = primary.get("state") or {}
-    bbox = primary.get("bbox") or {}
-    calibrating = bool(primary.get("calibrating", False))
-    head_pitch = state.get("head_pitch")
-
-    return FatigueFrame(
-        ts=ts,
-        person_id=f"track-{primary.get('track_id', 0)}",
-        bbox=(
-            int(bbox.get("x1", 0)),
-            int(bbox.get("y1", 0)),
-            int(bbox.get("x2", 0)),
-            int(bbox.get("y2", 0)),
+        tracked,
+        key=lambda frame: (
+            frame.quality >= 0.55 and frame.calib_state == "full",
+            frame.score * max(frame.quality, 0.05),
+            frame.confidence,
         ),
-        score=float(state.get("fatigue_score", 0.0)),
-        confidence=float(bbox.get("confidence", 0.0)),
-               factors=FatigueFactors(
-                   perclos=float(state.get("perclos", 0.0)),
-                   blink_ms_p50=float(state.get("blink_duration_ms_p50", 0.0)),
-                   blink_ms_p90=float(state.get("blink_duration_ms_p90", 0.0)),
-                   nod_count=int(state.get("nod_count", 0)),
-                   yawn_count=int(state.get("yawn_count", 0)),
-                   slump_deg=abs(float(head_pitch)) if head_pitch is not None else 0.0,
-                   eye_cnn_perclos=-1.0,
-                   movement_entropy=float(state.get("movement_entropy", 0.0)),
-                   sedentary_hours=float(state.get("sedentary_hours", 0.0)),
-               ),
-        calib_state="quick" if calibrating else "full",
-        scorer="fatigue_fastapi_service",
     )
+    # Return a copy for the summary card. Reusing the selected object here
+    # would put that object inside its own `people` list and make dataclass
+    # serialization recurse forever as soon as a face is detected.
+    return replace(primary, people=tracked)
 
 
 class LiveScoreSource(ScoreSource):
@@ -91,12 +195,21 @@ class LiveScoreSource(ScoreSource):
         ws_url: str,
         get_frame: Callable[[], np.ndarray | None],
         *,
+        should_analyze: Callable[[], bool] | None = None,
         reconnect_delay: float = 2.0,
+        max_reconnect_delay: float = 15.0,
+        connect_timeout: float = 5.0,
+        response_timeout: float = 10.0,
         jpeg_quality: int = 80,
     ) -> None:
         self._ws_url = ws_url
         self._get_frame = get_frame
+        self._should_analyze = should_analyze or (lambda: True)
         self._reconnect_delay = reconnect_delay
+        self._max_reconnect_delay = max(reconnect_delay, max_reconnect_delay)
+        self._connect_timeout = connect_timeout
+        self._response_timeout = response_timeout
+        self._backoff = reconnect_delay
         self._jpeg_quality = jpeg_quality
         self._frame = _idle_frame(time.time())
         self._task: asyncio.Task | None = None
@@ -124,6 +237,7 @@ class LiveScoreSource(ScoreSource):
             self._task = None
 
     async def _run_forever(self) -> None:
+        self._backoff = self._reconnect_delay
         while not self._stopping:
             try:
                 await self._connect_and_stream()
@@ -131,14 +245,57 @@ class LiveScoreSource(ScoreSource):
                 raise
             except Exception as exc:  # noqa: BLE001 - keep the loop alive
                 logger.warning("fatigue service connection lost: %s", exc)
-                self._frame = _idle_frame(time.time())
-                await asyncio.sleep(self._reconnect_delay)
+                # source_status must reflect reality: a hung or dead model is
+                # reported as offline instead of freezing the last score.
+                self._frame = _idle_frame(
+                    time.time(), source_status="model_offline"
+                )
+                delay = self._backoff
+                self._backoff = min(self._backoff * 2, self._max_reconnect_delay)
+                await asyncio.sleep(delay)
 
     async def _connect_and_stream(self) -> None:
-        async with websockets.connect(self._ws_url, max_size=16 * 1024 * 1024) as ws:
-            await ws.recv()  # discard the initial "ready" message
+        # Every await on the socket is bounded. Without timeouts, a stalled
+        # model service left ws.recv() pending forever and the published frame
+        # kept a stale ts and source_status until restart.
+        async with websockets.connect(
+            self._ws_url,
+            max_size=16 * 1024 * 1024,
+            open_timeout=self._connect_timeout,
+        ) as ws:
+            # The service is single-stream: instead of "ready" it may answer
+            # {"type": "error", "code": "stream_capacity_reached"} and close.
+            # Surface that reason instead of silently retrying forever.
+            greeting_raw = await asyncio.wait_for(
+                ws.recv(), timeout=self._response_timeout
+            )
+            greeting: dict = {}
+            if isinstance(greeting_raw, (str, bytes, bytearray)):
+                try:
+                    parsed = json.loads(greeting_raw)
+                    if isinstance(parsed, dict):
+                        greeting = parsed
+                except ValueError:
+                    pass
+            if greeting.get("type") != "ready":
+                raise RuntimeError(
+                    "fatigue service refused the stream: "
+                    f"type={greeting.get('type')!r} "
+                    f"code={greeting.get('code')!r} "
+                    f"message={greeting.get('message')!r}"
+                )
             logger.info("connected to fatigue service at %s", self._ws_url)
+            self._backoff = self._reconnect_delay
             while not self._stopping:
+                if not self._should_analyze():
+                    # Refresh ts on every pass so standby is visibly alive
+                    # rather than a snapshot frozen at the moment the gate
+                    # closed.
+                    self._frame = _idle_frame(
+                        time.time(), source_status="standby"
+                    )
+                    await asyncio.sleep(0.1)
+                    continue
                 frame = self._get_frame()
                 if frame is None:
                     await asyncio.sleep(0.05)
@@ -150,8 +307,12 @@ class LiveScoreSource(ScoreSource):
                 if not ok:
                     continue
 
-                await ws.send(buffer.tobytes())
-                message = await ws.recv()
+                await asyncio.wait_for(
+                    ws.send(buffer.tobytes()), timeout=self._response_timeout
+                )
+                message = await asyncio.wait_for(
+                    ws.recv(), timeout=self._response_timeout
+                )
                 if isinstance(message, bytes):
                     # Only happens if annotated=true was requested; we don't.
                     continue

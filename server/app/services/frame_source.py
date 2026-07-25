@@ -15,22 +15,68 @@ from app.contracts import FatigueFrame
 
 
 def _draw_fatigue_overlay(
-    frame: np.ndarray, fatigue: FatigueFrame, frame_height: int
+    frame: np.ndarray,
+    fatigue: FatigueFrame,
+    frame_height: int,
+    label_slot: int = 0,
 ) -> None:
     x1, y1, x2, y2 = fatigue.bbox
+    frame_width = frame.shape[1]
+    x1 = max(0, min(frame_width - 1, x1))
+    x2 = max(0, min(frame_width - 1, x2))
+    y1 = max(0, min(frame_height - 1, y1))
+    y2 = max(0, min(frame_height - 1, y2))
+    if x2 <= x1 or y2 <= y1:
+        return
     color = (61, 214, 198) if fatigue.score < 60 else (93, 93, 237)
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    track_label = (fatigue.person_id or "track-?").replace("track-", "ID ")
+    label = (
+        f"{track_label}  R {fatigue.score:.0f}  Q {fatigue.quality * 100:.0f}%"
+    )
+    font_scale = 0.52
+    thickness = 1
+    (label_width, label_height), baseline = cv2.getTextSize(
+        label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
+    )
+    label_x = min(x1, max(0, frame_width - label_width - 8))
+    label_y = max(label_height + 6, y1 - 7 - (label_slot % 3) * 20)
+    cv2.rectangle(
+        frame,
+        (label_x - 3, label_y - label_height - 4),
+        (label_x + label_width + 4, label_y + baseline + 3),
+        (10, 14, 20),
+        -1,
+    )
     cv2.putText(
         frame,
-        f"RestScore {fatigue.score:.0f}",
-        (x1, max(24, y1 - 10)),
+        label,
+        (label_x, label_y),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
+        font_scale,
         color,
-        2,
+        thickness,
         cv2.LINE_AA,
     )
-    if fatigue.confidence < 0.5:
+    posture_parts: list[str] = []
+    if fatigue.factors.slump_deg >= 8:
+        posture_parts.append(f"pitch {fatigue.factors.slump_deg:.0f}")
+    if fatigue.factors.nod_count > 0:
+        posture_parts.append(f"nod x{fatigue.factors.nod_count}")
+    if fatigue.factors.yawn_count > 0:
+        posture_parts.append(f"yawn x{fatigue.factors.yawn_count}")
+    if posture_parts:
+        cv2.putText(
+            frame,
+            " · ".join(posture_parts),
+            (x1, min(frame_height - 12, y2 + 22)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (139, 156, 179),
+            1,
+            cv2.LINE_AA,
+        )
+    elif fatigue.confidence < 0.5:
         cv2.putText(
             frame,
             "low confidence",
@@ -43,6 +89,19 @@ def _draw_fatigue_overlay(
         )
 
 
+def _draw_all_fatigue_overlays(
+    frame: np.ndarray, fatigue: FatigueFrame, frame_height: int
+) -> None:
+    tracks = fatigue.people or (
+        [fatigue] if fatigue.person_id is not None else []
+    )
+    for label_slot, track in enumerate(tracks):
+        if track.confidence >= 0.15 and track.bbox != (0, 0, 0, 0):
+            _draw_fatigue_overlay(
+                frame, track, frame_height, label_slot=label_slot
+            )
+
+
 class FrameSource(ABC):
     @abstractmethod
     def get_pov_frame(self) -> np.ndarray: ...
@@ -50,14 +109,35 @@ class FrameSource(ABC):
     @abstractmethod
     def get_annotated_frame(self) -> np.ndarray: ...
 
+    def get_jpeg_frame(self, annotated: bool = False) -> bytes:
+        frame = (
+            self.get_annotated_frame()
+            if annotated
+            else self.get_pov_frame()
+        )
+        ok, buffer = cv2.imencode(
+            ".jpg",
+            frame,
+            [int(cv2.IMWRITE_JPEG_QUALITY), 72],
+        )
+        if not ok:
+            raise RuntimeError("failed to encode jpeg frame")
+        return buffer.tobytes()
+
     def close(self) -> None:
         return None
 
 
 class StubFrameSource(FrameSource):
-    def __init__(self, width: int = 960, height: int = 540) -> None:
+    def __init__(
+        self,
+        width: int = 960,
+        height: int = 540,
+        score_provider: Callable[[], FatigueFrame] | None = None,
+    ) -> None:
         self.width = width
         self.height = height
+        self._score_provider = score_provider
         self._start = time.time()
 
     def _base_frame(self) -> np.ndarray:
@@ -94,8 +174,15 @@ class StubFrameSource(FrameSource):
 
     def get_annotated_frame(self) -> np.ndarray:
         frame = self._base_frame()
-        score = 35 + 25 * (0.5 + 0.5 * math.sin((time.time() - self._start) * 0.4))
-        self._draw_bbox(frame, score)
+        if self._score_provider is not None:
+            _draw_all_fatigue_overlays(
+                frame, self._score_provider(), self.height
+            )
+        else:
+            score = 35 + 25 * (
+                0.5 + 0.5 * math.sin((time.time() - self._start) * 0.4)
+            )
+            self._draw_bbox(frame, score)
         cv2.putText(
             frame,
             "STUB CAMERA",
@@ -194,13 +281,12 @@ class WebcamFrameSource(FrameSource):
         frame = self._read_frame()
         if self._score_provider is not None:
             fatigue = self._score_provider()
-            if fatigue.confidence >= 0.5 and fatigue.bbox != (0, 0, 0, 0):
-                self._draw_overlay(frame, fatigue)
+            _draw_all_fatigue_overlays(frame, fatigue, self.height)
         return frame
 
 
-class RobotCameraFrameSource(FrameSource):
-    """Pull MJPEG frames from the robot HTTP camera feed (port 5555)."""
+class MjpegFrameSource(FrameSource):
+    """Pull MJPEG frames from an HTTP multipart stream (robot or Insta360 bridge)."""
 
     def __init__(
         self,
@@ -214,7 +300,11 @@ class RobotCameraFrameSource(FrameSource):
         self.height = height
         self._score_provider = score_provider
         self._lock = threading.Lock()
+        self._decode_lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
+        self._latest_jpeg: bytes | None = None
+        self._latest_jpeg_seq = 0
+        self._decoded_jpeg_seq = -1
         self._error_message: str | None = "Connecting to robot camera..."
         self._stopped = False
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -235,22 +325,24 @@ class RobotCameraFrameSource(FrameSource):
                         if not chunk:
                             continue
                         buffer += chunk
-                        while True:
-                            start = buffer.find(b"\xff\xd8")
-                            end = buffer.find(b"\xff\xd9")
-                            if start == -1 or end == -1 or end <= start:
-                                break
-                            jpeg = buffer[start : end + 2]
+                        # Decode only the newest complete JPEG currently in the
+                        # socket buffer. Under CPU pressure, walking every old
+                        # frame in order made the booth seconds late even
+                        # though consumers asked for "latest".
+                        end = buffer.rfind(b"\xff\xd9")
+                        if end == -1:
+                            if len(buffer) > 8 * 1024 * 1024:
+                                buffer = buffer[-1024 * 1024 :]
+                            continue
+                        start = buffer.rfind(b"\xff\xd8", 0, end)
+                        if start == -1:
                             buffer = buffer[end + 2 :]
-                            frame = cv2.imdecode(
-                                np.frombuffer(jpeg, dtype=np.uint8),
-                                cv2.IMREAD_COLOR,
-                            )
-                            if frame is None:
-                                continue
-                            frame = cv2.resize(frame, (self.width, self.height))
-                            with self._lock:
-                                self._latest_frame = frame
+                            continue
+                        jpeg = buffer[start : end + 2]
+                        buffer = buffer[end + 2 :]
+                        with self._lock:
+                            self._latest_jpeg = jpeg
+                            self._latest_jpeg_seq += 1
             except Exception:  # noqa: BLE001 - reconnect loop
                 self._error_message = "Robot camera unavailable"
                 time.sleep(backoff)
@@ -259,6 +351,15 @@ class RobotCameraFrameSource(FrameSource):
     def close(self) -> None:
         self._stopped = True
         self._thread.join(timeout=2.0)
+
+    def get_jpeg_frame(self, annotated: bool = False) -> bytes:
+        if annotated:
+            return super().get_jpeg_frame(annotated=True)
+        with self._lock:
+            jpeg = self._latest_jpeg
+        if jpeg is not None:
+            return jpeg
+        return super().get_jpeg_frame(annotated=False)
 
     def _error_frame(self, message: str) -> np.ndarray:
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
@@ -276,12 +377,39 @@ class RobotCameraFrameSource(FrameSource):
         return frame
 
     def _read_frame(self) -> np.ndarray:
-        with self._lock:
-            frame = self._latest_frame
-            error = self._error_message
-        if frame is None:
-            return self._error_frame(error or "Waiting for robot camera")
-        return frame.copy()
+        # The upstream robot feed may run at 20-30 fps, but analysis and the
+        # annotated UI consume at a much lower rate. Decoding and resizing
+        # every incoming JPEG used CPU for frames nobody ever observed.
+        # Decode only the newest frame on demand, cache it by sequence, and
+        # serialize concurrent scorer/UI requests so a frame is decoded once.
+        with self._decode_lock:
+            with self._lock:
+                frame = self._latest_frame
+                jpeg = self._latest_jpeg
+                jpeg_seq = self._latest_jpeg_seq
+                decoded_seq = self._decoded_jpeg_seq
+                error = self._error_message
+
+            if jpeg is not None and jpeg_seq != decoded_seq:
+                decoded = cv2.imdecode(
+                    np.frombuffer(jpeg, dtype=np.uint8),
+                    cv2.IMREAD_COLOR,
+                )
+                if decoded is not None:
+                    if decoded.shape[:2] != (self.height, self.width):
+                        decoded = cv2.resize(
+                            decoded, (self.width, self.height)
+                        )
+                    with self._lock:
+                        self._latest_frame = decoded
+                        self._decoded_jpeg_seq = jpeg_seq
+                    frame = decoded
+
+            if frame is None:
+                return self._error_frame(
+                    error or "Waiting for robot camera"
+                )
+            return frame.copy()
 
     def get_pov_frame(self) -> np.ndarray:
         return self._read_frame()
@@ -290,25 +418,30 @@ class RobotCameraFrameSource(FrameSource):
         frame = self._read_frame()
         if self._score_provider is not None:
             fatigue = self._score_provider()
-            if fatigue.confidence >= 0.5 and fatigue.bbox != (0, 0, 0, 0):
-                _draw_fatigue_overlay(frame, fatigue, self.height)
+            _draw_all_fatigue_overlays(frame, fatigue, self.height)
         return frame
+
+
+RobotCameraFrameSource = MjpegFrameSource
 
 
 def create_frame_source(
     camera_source: str,
     score_provider: Callable[[], FatigueFrame] | None = None,
     robot_camera_url: str | None = None,
+    insta360_mjpeg_url: str | None = None,
 ) -> FrameSource:
     if camera_source == "stub":
-        return StubFrameSource()
+        return StubFrameSource(score_provider=score_provider)
+
+    if camera_source == "insta360":
+        url = insta360_mjpeg_url or "http://127.0.0.1:5556/video"
+        return MjpegFrameSource(url=url, score_provider=score_provider)
 
     if camera_source == "robot":
         if not robot_camera_url:
             raise ValueError("robot_camera_url is required when CAMERA_SOURCE=robot")
-        return RobotCameraFrameSource(
-            url=robot_camera_url, score_provider=score_provider
-        )
+        return MjpegFrameSource(url=robot_camera_url, score_provider=score_provider)
 
     device: int | str
     if camera_source == "webcam":

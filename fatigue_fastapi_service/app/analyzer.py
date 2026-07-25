@@ -8,7 +8,6 @@ import cv2
 import numpy as np
 
 from common.attention import (
-    AttentionCalibrator,
     AttentionGeometry,
     extract_attention_geometry,
 )
@@ -45,7 +44,7 @@ class FatigueInferenceEngine:
             self.face_detector.detect(warmup_frame)
             self.landmark_detector.detect(warmup_frame)
 
-    def new_session(self) -> "FatigueSession":
+    def new_session(self) -> FatigueSession:
         return FatigueSession(self)
 
     def close(self) -> None:
@@ -126,6 +125,7 @@ class FatigueSession:
             ]
             landmarks = self.engine.landmark_detector.detect(crop)
             state = track.state
+            geometry = None
 
             if landmarks is not None:
                 if (
@@ -155,33 +155,41 @@ class FatigueSession:
                     if geometry is not None
                     else None
                 )
+                # Fatigue evidence must start on the first usable frame.
+                # Previously the complete monitor was disabled until 20
+                # calibration frames had accumulated. Worse, a visitor who
+                # arrived already slumped taught that slumped pose as their
+                # neutral baseline, erasing the exact signal we needed. Keep
+                # calibration for individualized gaze deltas, but use absolute
+                # head pose and a calibrated-or-absolute gaze immediately.
+                monitor_geometry = relative_geometry or geometry
                 state = track.monitor.update(
                     timestamp,
                     ear,
                     mar,
                     head_pitch=(
-                        relative_geometry.pitch
-                        if relative_geometry is not None
+                        monitor_geometry.pitch
+                        if monitor_geometry is not None
                         else None
                     ),
                     head_yaw=(
-                        relative_geometry.yaw
-                        if relative_geometry is not None
+                        monitor_geometry.yaw
+                        if monitor_geometry is not None
                         else None
                     ),
                     head_roll=(
-                        relative_geometry.roll
-                        if relative_geometry is not None
+                        monitor_geometry.roll
+                        if monitor_geometry is not None
                         else None
                     ),
                     gaze_horizontal=(
-                        relative_geometry.gaze_horizontal
-                        if relative_geometry is not None
+                        monitor_geometry.gaze_horizontal
+                        if monitor_geometry is not None
                         else None
                     ),
                     gaze_vertical=(
-                        relative_geometry.gaze_vertical
-                        if relative_geometry is not None
+                        monitor_geometry.gaze_vertical
+                        if monitor_geometry is not None
                         else None
                     ),
                 )
@@ -195,8 +203,56 @@ class FatigueSession:
                         source_size=(crop_width, crop_height),
                     )
 
+            # Engagement is absolute camera geometry, not the fatigue
+            # calibrator's relative baseline (which could be learned while the
+            # visitor was looking away). Require a few consecutive frames and
+            # hysteresis so a single landmark wobble cannot switch identities.
+            direct_look = bool(
+                geometry is not None
+                and abs(float(geometry.yaw)) <= 25.0
+                and abs(float(geometry.pitch)) <= 30.0
+                and (
+                    geometry.gaze_horizontal is None
+                    or abs(float(geometry.gaze_horizontal)) <= 0.55
+                )
+                and (
+                    geometry.gaze_vertical is None
+                    or abs(float(geometry.gaze_vertical)) <= 0.60
+                )
+            )
+            if direct_look:
+                track.direct_look_frames += 1
+                track.away_frames = 0
+                if track.direct_look_frames >= 3:
+                    track.looking_at_camera = True
+            else:
+                track.direct_look_frames = 0
+                track.away_frames += 1
+                if track.away_frames >= 3:
+                    track.looking_at_camera = False
+
             calibrating = not track.attention_calibrator.ready
             status, color = self._status(state, calibrating)
+            frame_height, frame_width = frame.shape[:2]
+            face_area_ratio = (
+                max(0, detected_box.x2 - detected_box.x1)
+                * max(0, detected_box.y2 - detected_box.y1)
+                / max(1, frame_width * frame_height)
+            )
+            # Quality is deliberately separate from detector confidence.
+            # A confident but tiny/landmark-less face is unsuitable for
+            # longitudinal fatigue inference and must remain non-actionable.
+            size_quality = min(1.0, (face_area_ratio / 0.02) ** 0.5)
+            landmark_quality = 1.0 if landmarks is not None else 0.25
+            quality = min(
+                1.0,
+                max(
+                    0.0,
+                    float(detected_box.confidence)
+                    * size_quality
+                    * landmark_quality,
+                ),
+            )
             if annotate:
                 cv2.rectangle(
                     frame,
@@ -223,10 +279,32 @@ class FatigueSession:
                     "track_id": track.track_id,
                     "status": status,
                     "bbox": self._box_payload(detected_box),
+                    "quality": quality,
+                    "face_area_ratio": face_area_ratio,
                     "landmarks_detected": landmarks is not None,
                     "calibrating": calibrating,
                     "calibration_progress": (
                         track.attention_calibrator.progress
+                    ),
+                    "looking_at_camera": track.looking_at_camera,
+                    "attention": (
+                        {
+                            "head_pitch": float(geometry.pitch),
+                            "head_yaw": float(geometry.yaw),
+                            "head_roll": float(geometry.roll),
+                            "gaze_horizontal": (
+                                float(geometry.gaze_horizontal)
+                                if geometry.gaze_horizontal is not None
+                                else None
+                            ),
+                            "gaze_vertical": (
+                                float(geometry.gaze_vertical)
+                                if geometry.gaze_vertical is not None
+                                else None
+                            ),
+                        }
+                        if geometry is not None
+                        else None
                     ),
                     "state": state.to_dict() if state is not None else None,
                 }
@@ -250,6 +328,11 @@ class FatigueSession:
                 "face_count": len(people),
                 "drowsy_count": drowsy_count,
                 "inattentive_count": inattentive_count,
+            },
+            "model": {
+                "version": "fatigue-yolov8face-mediapipe-v1",
+                "face_detector": self.settings.yolo_model.name,
+                "landmarks": self.settings.landmark_model.name,
             },
             "people": people,
             "processing_ms": (time.perf_counter() - started) * 1000.0,

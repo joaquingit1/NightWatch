@@ -5,26 +5,46 @@ import type { FatigueFrame } from "@/lib/types";
 
 const POLL_MS = 500;
 
-function factorBar(label: string, value: number, max: number) {
-  const pct = Math.min(100, Math.max(0, (value / max) * 100));
+function clampPercent(value: number, max: number): number {
+  return Math.min(100, Math.max(0, (value / max) * 100));
+}
+
+function scoreTone(score: number): {
+  color: string;
+  label: string;
+  status: "live" | "warn" | "danger";
+} {
+  if (score >= 60) {
+    return { color: "bg-booth-danger", label: "Rest advised", status: "danger" };
+  }
+  if (score >= 40) {
+    return { color: "bg-booth-warn", label: "Observe", status: "warn" };
+  }
+  return { color: "bg-booth-accent", label: "Nominal", status: "live" };
+}
+
+function signalCell(label: string, value: number, max: number, unit = "") {
   return (
-    <div key={label} className="space-y-1">
-      <div className="flex justify-between text-xs font-medium text-booth-muted">
-        <span>{label}</span>
-        <span className="text-booth-text">{value.toFixed(1)}</span>
+    <div key={label} className="border-t border-booth-border px-3 py-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="nw-kicker !text-[8px] !tracking-[0.08em]">{label}</span>
+        <span className="font-data text-[11px] font-semibold text-booth-text">
+          {value.toFixed(1)}
+          {unit}
+        </span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+      <div className="mt-2 h-[2px] bg-[#d9d6ce]">
         <div
-          className="h-full rounded-full bg-booth-accent transition-[width] duration-300 ease-linear"
-          style={{ width: `${pct}%` }}
+          className="h-full bg-booth-accent transition-[width] duration-300"
+          style={{ width: `${clampPercent(value, max)}%` }}
         />
       </div>
     </div>
   );
 }
 
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+function trackId(personId: string | null): string {
+  return (personId ?? "track-?").replace("track-", "ID–");
 }
 
 export function ScoreCard() {
@@ -58,59 +78,139 @@ export function ScoreCard() {
 
   const score = frame?.score ?? 0;
   const confidence = frame?.confidence ?? 0;
-  const lowConfidence = confidence < 0.5;
+  const quality = frame?.quality ?? 0;
+  const tracks = frame?.people?.length
+    ? frame.people
+    : frame?.person_id
+      ? [frame]
+      : [];
+  const modelLive = frame?.source_status === "live" && !error;
+  const tone = scoreTone(score);
 
   return (
-    <section className="rounded-xl glass-panel p-5 animate-slide-up">
-      <h2 className="mb-3 text-xs font-bold text-booth-muted/80">
-        RestScore 疲劳指数
-      </h2>
-      <div className="flex items-end gap-3">
-        <span
-          className={`text-7xl font-bold leading-none transition-colors duration-500 ${
-            score >= 60 ? "text-booth-danger" : score >= 40 ? "text-booth-warn" : "text-booth-accent"
-          }`}
-        >
-          {Math.round(score)}
-        </span>
-        <span className="mb-2 text-2xl font-light text-booth-muted/60">/ 100</span>
-      </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className={`h-full rounded-full transition-[width] duration-300 ease-linear ${
-            score >= 60 ? "bg-booth-danger" : score >= 40 ? "bg-booth-warn" : "bg-booth-accent"
-          }`}
-          style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
-        />
-      </div>
-      <div className="mt-2 flex items-center justify-between text-sm text-booth-muted">
-        <div>
-          {lowConfidence
-            ? "置信度不足，暂不判定 | Low confidence"
-            : `置信度 ${(confidence * 100).toFixed(0)}%`}
+    <section className="nw-panel shrink-0 overflow-hidden">
+      <div className="nw-panel-header">
+        <span className="nw-kicker">02 / Rest index</span>
+        <div className="flex items-center gap-2">
+          <span className="font-data text-[9px] text-booth-muted">
+            {frame ? `${frame.processing_ms.toFixed(0)} MS` : "— MS"}
+          </span>
+          <span
+            className="nw-status"
+            data-tone={modelLive ? "live" : "warn"}
+          >
+            {modelLive ? "Model live" : "Model offline"}
+          </span>
         </div>
-        {frame && (
-          <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-            frame.calib_state === 'full' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
-            frame.calib_state === 'quick' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
-            'bg-slate-100 text-slate-500 border border-slate-200'
-          }`}>
-            Calib: {capitalize(frame.calib_state)}
+      </div>
+
+      <div className="grid grid-cols-[1fr_126px] border-b border-booth-border">
+        <div className="px-4 py-2">
+          <div className="flex items-end gap-3">
+            <span className="font-data text-[70px] font-medium leading-[0.9] tracking-[-0.08em] text-booth-text">
+              {Math.round(score).toString().padStart(2, "0")}
+            </span>
+            <div className="mb-1.5">
+              <div className="font-data text-[10px] text-booth-muted">/ 100</div>
+              <div className="mt-1 text-[11px] font-semibold text-booth-text">
+                {tone.label}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <div className="relative h-2 bg-[#d8d5cc]">
+              <div
+                className={`h-full ${tone.color} transition-[width] duration-300`}
+                style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
+              />
+              <span className="absolute left-[40%] top-0 h-2 w-px bg-booth-ink/50" />
+              <span className="absolute left-[60%] top-0 h-2 w-px bg-booth-ink/50" />
+            </div>
+            <div className="font-data mt-1 flex justify-between text-[8px] text-booth-muted">
+              <span>0 / ALERT</span>
+              <span>40</span>
+              <span>60</span>
+              <span>100 / REST</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-rows-2 divide-y divide-booth-border border-l border-booth-border">
+          <div className="flex flex-col justify-center px-3">
+            <span className="nw-kicker !text-[8px]">Confidence</span>
+            <span className="font-data mt-1 text-xl font-semibold">
+              {(confidence * 100).toFixed(0)}
+              <span className="text-[10px] text-booth-muted">%</span>
+            </span>
+          </div>
+          <div className="flex flex-col justify-center px-3">
+            <span className="nw-kicker !text-[8px]">Signal quality</span>
+            <span className="font-data mt-1 text-xl font-semibold">
+              {(quality * 100).toFixed(0)}
+              <span className="text-[10px] text-booth-muted">%</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-b border-booth-border">
+        <div className="flex items-center justify-between px-3 py-2">
+          <span className="nw-kicker !text-[8px]">Anonymous subjects</span>
+          <span className="font-data text-[9px] text-booth-muted">
+            {tracks.length.toString().padStart(2, "0")} active ·{" "}
+            {frame?.model_version ?? "waiting for model"}
+          </span>
+        </div>
+
+        {tracks.length ? (
+          <div className="divide-y divide-booth-border border-t border-booth-border">
+            {tracks.map((track) => {
+              const isPrimary = track.person_id === frame?.person_id;
+              const calibrated = track.calib_state === "full";
+              return (
+                <div
+                  key={track.person_id ?? `sequence-${track.sequence}`}
+                  className={`grid grid-cols-[44px_1fr_52px_58px_74px] items-center px-3 py-1.5 font-data text-[9px] ${
+                    isPrimary ? "bg-booth-accent-soft" : "bg-booth-panel"
+                  }`}
+                >
+                  <span className="font-bold text-booth-text">
+                    {trackId(track.person_id)}
+                  </span>
+                  <span className="truncate text-booth-muted">
+                    {track.status}
+                  </span>
+                  <span className="text-right text-booth-text">
+                    R {track.score.toFixed(0)}
+                  </span>
+                  <span className="text-right text-booth-text">
+                    Q {(track.quality * 100).toFixed(0)}
+                  </span>
+                  <span className="text-right text-booth-muted">
+                    {calibrated
+                      ? "CALIBRATED"
+                      : `CAL ${(track.calibration_progress * 100).toFixed(0)}%`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="border-t border-booth-border px-3 py-3 font-data text-[9px] uppercase tracking-[0.08em] text-booth-muted">
+            No clear, consented subject in frame
           </div>
         )}
       </div>
-      {error && (
-        <p className="mt-2 text-sm text-booth-warn">重新连接中 reconnecting...</p>
-      )}
+
       {frame && (
-        <div className="mt-4 space-y-2">
-          {factorBar("PERCLOS", frame.factors.perclos, 1)}
-          {factorBar("Blink Duration (ms)", frame.factors.blink_ms_p90, 800)}
-          {factorBar("Nods", frame.factors.nod_count, 5)}
-          {factorBar("Yawns", frame.factors.yawn_count, 3)}
-          {factorBar("Slump", frame.factors.slump_deg, 30)}
-          {factorBar("Movement Entropy", frame.factors.movement_entropy, 5)}
-          {factorBar("Sedentary Hours", frame.factors.sedentary_hours, 4)}
+        <div className="grid grid-cols-2 bg-booth-panel-strong">
+          {signalCell("PERCLOS", frame.factors.perclos, 1)}
+          {signalCell("Blink p90", frame.factors.blink_ms_p90, 800, "ms")}
+          {signalCell("Nods", frame.factors.nod_count, 5)}
+          {signalCell("Yawns", frame.factors.yawn_count, 3)}
+          {signalCell("Slump", frame.factors.slump_deg, 30, "°")}
+          {signalCell("Movement", frame.factors.movement_entropy, 5)}
         </div>
       )}
     </section>

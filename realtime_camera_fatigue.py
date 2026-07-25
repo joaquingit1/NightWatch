@@ -176,6 +176,9 @@ class FaceTrack:
     last_seen_timestamp: float
     last_landmark_timestamp: float | None = None
     state: FatigueState | None = None
+    direct_look_frames: int = 0
+    away_frames: int = 0
+    looking_at_camera: bool = False
 
 
 class MultiFaceTracker:
