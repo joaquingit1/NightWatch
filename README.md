@@ -84,7 +84,9 @@ QR/NFC binding, and unique Bedroom behavior are specified in
 The form URL defaults to local development. The current Tencent Cloud form is
 `http://82.157.96.225/form`; set
 `NIGHTWATCH_PUBLIC_FORM_URL=http://82.157.96.225/form` when starting the robot
-workbench for public QR/NFC use.
+workbench for public QR/NFC use. A restricted SSH reverse tunnel mirrors each
+public submission to the local `/api/form/responses` endpoint in real time;
+`run_integrated.sh` starts it automatically when the local sync key is present.
 
 ---
 

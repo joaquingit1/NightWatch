@@ -29,6 +29,7 @@ out/
 .env
 .env.local
 .env.*.local
+.secrets/
 
 # Local runtime data
 *.db

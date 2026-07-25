@@ -38,6 +38,20 @@ else
   camera_source="webcam"
 fi
 robot_bridge_enabled="${ROBOT_BRIDGE_ENABLED:-$with_robot}"
+form_sync_key="$project_root/.secrets/tencent_form_sync_ed25519"
+form_sync_known_hosts="$project_root/.secrets/tencent_known_hosts"
+form_sync_mode="${FORM_SYNC_TUNNEL_ENABLED:-auto}"
+if [[ "$form_sync_mode" == "auto" ]]; then
+  if [[ -r "$form_sync_key" && -r "$form_sync_known_hosts" ]]; then
+    form_sync_enabled=1
+  else
+    form_sync_enabled=0
+  fi
+elif [[ "$form_sync_mode" == "1" || "$form_sync_mode" == "true" ]]; then
+  form_sync_enabled=1
+else
+  form_sync_enabled=0
+fi
 
 if [[ "$scorer_backend" == "live" && ! -x "$fatigue_python" ]]; then
   print -u2 "Missing fatigue_fastapi_service/.venv."
@@ -127,6 +141,10 @@ if (( with_robot )); then
   "$project_root/nightwatch/run_scout.sh" &
   child_pids+=($!)
 fi
+if (( form_sync_enabled )); then
+  "$project_root/scripts/run_form_sync_tunnel.sh" &
+  child_pids+=($!)
+fi
 
 wait_http() {
   local name="$1"
@@ -153,6 +171,11 @@ print "Night Watch integrated stack:"
 print "  Camera: $camera_source"
 print "  Scorer: $scorer_backend"
 print "  Robot bridge: $robot_bridge_enabled"
+if (( form_sync_enabled )); then
+  print "  Public form sync: real-time tunnel enabled"
+else
+  print "  Public form sync: disabled"
+fi
 if [[ "$scorer_backend" == "live" ]]; then
   wait_http "Fatigue model" "http://127.0.0.1:8001/health"
 fi
