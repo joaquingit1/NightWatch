@@ -156,36 +156,104 @@
     .stack > .panel:nth-child(even) { background: var(--paper-deep); }
     .video-head {
       justify-content: space-between;
+      flex-wrap: wrap;
       margin: -14px -14px 12px;
       padding: 10px 12px;
       border-bottom: 4px solid var(--ink);
       background: var(--acid);
     }
     .video-head h2 { margin: 0; }
-    .video-wrap {
+    .video-head > .row { flex-wrap: wrap; justify-content: flex-end; }
+    .vision-stage {
       position: relative;
       background: var(--ink);
       border: 4px solid var(--ink);
       overflow: hidden;
-      min-height: 260px;
+      min-height: clamp(320px, 48vw, 690px);
+      isolation: isolate;
     }
-    .video-wrap img { width: 100%; min-height: 260px; max-height: 62vh; display: block; aspect-ratio: 16/9; object-fit: contain; }
-    .video-wrap::before,
-    .video-wrap::after {
+    .vision-stage::before,
+    .vision-stage::after {
       content: "";
       position: absolute;
-      z-index: 2;
+      z-index: 12;
       width: 22px;
       height: 22px;
       pointer-events: none;
     }
-    .video-wrap::before { top: 9px; left: 9px; border-top: 3px solid var(--orange); border-left: 3px solid var(--orange); }
-    .video-wrap::after { right: 9px; bottom: 9px; border-right: 3px solid var(--orange); border-bottom: 3px solid var(--orange); }
+    .vision-stage::before { top: 9px; left: 9px; border-top: 3px solid var(--orange); border-left: 3px solid var(--orange); }
+    .vision-stage::after { right: 9px; bottom: 9px; border-right: 3px solid var(--orange); border-bottom: 3px solid var(--orange); }
+    .vision-pane {
+      position: absolute;
+      overflow: hidden;
+      background: #04060c;
+      transition: inset 180ms ease, width 180ms ease, height 180ms ease, box-shadow 180ms ease;
+    }
+    .vision-pane img,
+    .vision-pane iframe {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border: 0;
+      object-fit: contain;
+    }
+    .vision-stage[data-primary="camera"] .camera-pane,
+    .vision-stage[data-primary="lidar"] .lidar-pane {
+      inset: 0;
+      z-index: 1;
+    }
+    .vision-stage[data-primary="camera"] .lidar-pane,
+    .vision-stage[data-primary="lidar"] .camera-pane {
+      inset: auto 14px 14px auto;
+      z-index: 8;
+      width: min(36%, 390px);
+      height: auto;
+      aspect-ratio: 16 / 9;
+      border: 4px solid var(--paper);
+      box-shadow: 6px 6px 0 var(--orange);
+    }
+    .vision-stage[data-primary="camera"] .lidar-pane:hover,
+    .vision-stage[data-primary="lidar"] .camera-pane:hover {
+      box-shadow: 8px 8px 0 var(--acid);
+    }
+    .vision-label {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 10;
+      padding: 4px 7px;
+      color: white;
+      background: rgba(9, 9, 9, .78);
+      border: 2px solid currentColor;
+      font-size: .62rem;
+      font-weight: 900;
+      letter-spacing: .08em;
+      pointer-events: none;
+    }
+    .vision-stage[data-primary="camera"] .camera-pane .vision-label,
+    .vision-stage[data-primary="lidar"] .lidar-pane .vision-label { display: none; }
+    .pip-swap {
+      position: absolute;
+      right: 7px;
+      top: 7px;
+      z-index: 11;
+      min-height: 30px;
+      padding: 4px 7px;
+      color: var(--ink);
+      background: var(--acid);
+      border-width: 2px;
+      box-shadow: 2px 2px 0 var(--ink);
+      font-size: .6rem;
+    }
+    .vision-stage[data-primary="camera"] .camera-pane .pip-swap,
+    .vision-stage[data-primary="lidar"] .lidar-pane .pip-swap { display: none; }
+    .vision-mode { display: flex; gap: 6px; }
+    .vision-mode button { min-height: 34px; padding: 5px 8px; font-size: .66rem; }
     .overlay {
       position: absolute;
       left: 12px;
       bottom: 12px;
-      z-index: 3;
+      z-index: 9;
       max-width: calc(100% - 24px);
       padding: 8px 10px;
       background: var(--orange);
@@ -338,6 +406,18 @@
       .metric:nth-child(2n) { border-right: 0; }
       .metric:nth-last-child(-n + 2) { border-bottom: 0; }
       .panel { box-shadow: 4px 4px 0 var(--ink); }
+      .vision-stage { min-height: 310px; }
+      .vision-stage[data-primary="camera"] .lidar-pane,
+      .vision-stage[data-primary="lidar"] .camera-pane {
+        right: 9px;
+        bottom: 9px;
+        width: 44%;
+        border-width: 3px;
+        box-shadow: 4px 4px 0 var(--orange);
+      }
+      .vision-label { font-size: .52rem; }
+      .pip-swap { font-size: 0; }
+      .pip-swap::after { content: "↔"; font-size: .8rem; }
     }
   </style>
 </head>
@@ -362,15 +442,33 @@
     <div class="stack">
       <section class="panel">
         <div class="video-head">
-          <h2 data-i18n="video.heading">机器人视野 / 疲劳指数</h2>
+          <h2 data-i18n="video.heading">机器人视野 / 摄像头 + 三维雷达</h2>
           <div class="row">
+            <div class="vision-mode" role="group" aria-label="主画面" data-i18n-aria-label="video.primaryLabel">
+              <button id="cameraPrimary" class="active" onclick="setVisionPrimary('camera')"><span data-i18n="video.cameraPrimary">摄像头为主</span></button>
+              <button id="lidarPrimary" onclick="setVisionPrimary('lidar')"><span data-i18n="video.lidarPrimary">雷达为主</span> <kbd>V</kbd></button>
+            </div>
             <button id="analysisMode" class="active" onclick="setVideoMode('analysis')" data-i18n="video.analysis">分析</button>
             <button id="rawMode" onclick="setVideoMode('raw')" data-i18n="video.raw">原始</button>
           </div>
         </div>
-        <div class="video-wrap">
-          <img id="robotVideo" alt="机器人相机视频" data-i18n-alt="video.alt">
-          <div id="videoOverlay" class="overlay"></div>
+        <div id="visionStage" class="vision-stage" data-primary="camera">
+          <div id="cameraPane" class="vision-pane camera-pane">
+            <img id="robotVideo" alt="机器人相机视频" data-i18n-alt="video.alt">
+            <span class="vision-label" data-i18n="video.cameraLabel">摄像头</span>
+            <button class="pip-swap" type="button" onclick="setVisionPrimary('camera')" data-i18n="video.makeCameraPrimary">切换为主画面</button>
+            <div id="videoOverlay" class="overlay"></div>
+          </div>
+          <div id="lidarPane" class="vision-pane lidar-pane">
+            <iframe
+              id="lidarPreview"
+              src="http://127.0.0.1:3000/lidar?embed=1&amp;lang=zh"
+              title="三维雷达地图"
+              data-i18n-title="video.lidarTitle"
+            ></iframe>
+            <span class="vision-label" data-i18n="video.lidarLabel">三维雷达</span>
+            <button class="pip-swap" type="button" onclick="setVisionPrimary('lidar')" data-i18n="video.makeLidarPrimary">切换为主画面</button>
+          </div>
         </div>
         <div class="metrics">
           <div class="metric"><span data-i18n="metric.mission">任务模式</span><b id="mission">—</b></div>
@@ -416,7 +514,7 @@
           <button class="primary cruise-only" onclick="approachNearest()"><span data-i18n="action.nearest">接近最近的人</span> <kbd>N</kbd></button>
           <button onclick="act('stop_follow')"><span data-i18n="action.stopFollow">停止跟随</span></button>
           <button class="danger" onclick="act('stop')"><span data-i18n="action.stopNav">停止导航</span></button>
-          <a class="button" href="http://127.0.0.1:3000/lidar"><span data-i18n="action.lidar">三维地图 / Bedroom 标定</span> <kbd>L</kbd></a>
+          <a class="button" href="http://127.0.0.1:3000/lidar" onclick="openLidarPage(event)"><span data-i18n="action.lidar">三维地图 / Bedroom 标定</span> <kbd>L</kbd></a>
           <a class="button" href="__NIGHTWATCH_FORM_URL__" target="_blank"><span data-i18n="action.form">休息问卷</span></a>
         </div>
       </section>
@@ -475,6 +573,7 @@
   const API_BASE = 'http://127.0.0.1:8000';
   const RAW_VIDEO = '/video_feed/camera';
   const ANALYSIS_VIDEO = API_BASE + '/video_feed/annotated';
+  const LIDAR_ORIGIN = 'http://127.0.0.1:3000';
   const statusEl = document.getElementById('status');
   const video = document.getElementById('robotVideo');
   const videoOverlay = document.getElementById('videoOverlay');
@@ -488,10 +587,18 @@
       'header.brand': '守夜犬',
       'header.subtitle': 'NIGHT WATCH / OPERATOR CONSOLE',
       'header.help': '工作台使用说明 →',
-      'video.heading': '机器人视野 / 疲劳指数',
+      'video.heading': '机器人视野 / 摄像头 + 三维雷达',
       'video.analysis': '分析',
       'video.raw': '原始',
       'video.alt': '机器人相机视频',
+      'video.primaryLabel': '主画面',
+      'video.cameraPrimary': '摄像头为主',
+      'video.lidarPrimary': '雷达为主',
+      'video.cameraLabel': '摄像头',
+      'video.lidarLabel': '三维雷达',
+      'video.makeCameraPrimary': '切换为主画面',
+      'video.makeLidarPrimary': '切换为主画面',
+      'video.lidarTitle': '三维雷达地图',
       'metric.mission': '任务模式',
       'metric.control': '控制模式',
       'metric.behavior': '当前行为',
@@ -662,10 +769,18 @@
       'header.brand': 'NIGHT WATCH',
       'header.subtitle': 'ROBOT DOG / OPERATOR CONSOLE',
       'header.help': 'Operator guide →',
-      'video.heading': 'ROBOT VIEW / FATIGUE INDEX',
+      'video.heading': 'ROBOT VIEW / CAMERA + 3D LIDAR',
       'video.analysis': 'Analysis',
       'video.raw': 'Raw',
       'video.alt': 'Robot camera video',
+      'video.primaryLabel': 'Primary view',
+      'video.cameraPrimary': 'Camera primary',
+      'video.lidarPrimary': 'Lidar primary',
+      'video.cameraLabel': 'Camera',
+      'video.lidarLabel': '3D lidar',
+      'video.makeCameraPrimary': 'Make primary',
+      'video.makeLidarPrimary': 'Make primary',
+      'video.lidarTitle': '3D lidar map',
       'metric.mission': 'Mission mode',
       'metric.control': 'Control mode',
       'metric.behavior': 'Current behavior',
@@ -832,6 +947,7 @@
   };
   let statusSnapshot = {};
   let videoMode = 'analysis';
+  let visionPrimary = 'camera';
   // Epoch-based start keeps packets ordered across page reloads and old tabs.
   let manualSequence = Date.now() * 1000;
   let movementTimer = null;
@@ -952,6 +1068,9 @@
     document.querySelectorAll('[data-i18n-alt]').forEach(element => {
       element.setAttribute('alt', t(element.dataset.i18nAlt));
     });
+    document.querySelectorAll('[data-i18n-title]').forEach(element => {
+      element.setAttribute('title', t(element.dataset.i18nTitle));
+    });
     document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
       element.setAttribute('aria-label', t(element.dataset.i18nAriaLabel));
     });
@@ -961,9 +1080,40 @@
     document.getElementById('languageEn').setAttribute('aria-pressed', String(uiLanguage === 'en'));
     statusEl.textContent = t(statusNotice.key, statusNotice.vars);
     setLinkState(linkNotice);
+    setVisionPrimary(visionPrimary);
+    syncLidarLanguage();
     renderPeople();
     renderStatusValues(statusSnapshot);
   }
+  function syncLidarLanguage() {
+    const frame = document.getElementById('lidarPreview');
+    try {
+      frame.contentWindow?.postMessage(
+        {type: 'nightwatch-language', language: uiLanguage},
+        LIDAR_ORIGIN
+      );
+    } catch (_) {}
+  }
+  function setVisionPrimary(primary) {
+    visionPrimary = primary === 'lidar' ? 'lidar' : 'camera';
+    document.getElementById('visionStage').dataset.primary = visionPrimary;
+    document.getElementById('cameraPrimary').classList.toggle('active', visionPrimary === 'camera');
+    document.getElementById('lidarPrimary').classList.toggle('active', visionPrimary === 'lidar');
+    document.getElementById('cameraPrimary').setAttribute('aria-pressed', String(visionPrimary === 'camera'));
+    document.getElementById('lidarPrimary').setAttribute('aria-pressed', String(visionPrimary === 'lidar'));
+  }
+  function openLidarPage(event) {
+    event?.preventDefault();
+    window.location.href = `${LIDAR_ORIGIN}/lidar?lang=${uiLanguage}`;
+  }
+  window.addEventListener('message', event => {
+    if (
+      event.origin === LIDAR_ORIGIN &&
+      event.data?.type === 'nightwatch-toggle-vision'
+    ) {
+      setVisionPrimary(visionPrimary === 'camera' ? 'lidar' : 'camera');
+    }
+  });
   function setText(id, value) { document.getElementById(id).textContent = value == null || value === '' ? '—' : value; }
   function line(css, text, roleKey) {
     const div = document.createElement('div');
@@ -1122,7 +1272,8 @@
     else if (key === 'm') setControl(statusSnapshot.control_mode === 'manual' ? 'autonomous' : 'manual');
     else if (key === 'f') act('scan_now');
     else if (key === 'n') approachNearest();
-    else if (key === 'l') window.location.href = 'http://127.0.0.1:3000/lidar';
+    else if (key === 'v') setVisionPrimary(visionPrimary === 'camera' ? 'lidar' : 'camera');
+    else if (key === 'l') openLidarPage(event);
     else if (key in actionMap) act(actionMap[key]);
   });
   window.addEventListener('keyup', event => {
@@ -1219,6 +1370,7 @@
       else setStatusKey('status.operationFailed', {detail: data.message || t('error.requestRejected')});
     } catch (error) { setStatusKey('status.sendFailed', {detail: error.message}); }
   });
+  document.getElementById('lidarPreview').addEventListener('load', syncLidarLanguage);
   setLanguage(uiLanguage);
   setVideoMode('analysis');
   refreshStatus(); refreshPolicyStatus();

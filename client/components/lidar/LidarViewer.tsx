@@ -101,6 +101,8 @@ const COPY = {
     cameraOffline: "无信号 · 正在重试",
     cameraAlt: "机器狗第一视角相机",
     language: "语言",
+    openFull: "打开完整地图 / Bedroom 标定",
+    mapPoints: "地图点数",
   },
   en: {
     pageTitle: "Night Watch · 3D Lidar Map",
@@ -172,6 +174,8 @@ const COPY = {
     cameraOffline: "NO SIGNAL · RETRYING",
     cameraAlt: "Robot first-person camera",
     language: "Language",
+    openFull: "OPEN FULL MAP / BEDROOM",
+    mapPoints: "MAP POINTS",
   },
 } as const;
 
@@ -180,7 +184,13 @@ function formatPosition(position: WorldPosition | null): string {
   return `X ${position.x.toFixed(2)} · Y ${position.y.toFixed(2)} · Z ${position.z.toFixed(2)}`;
 }
 
-export function LidarViewer() {
+export function LidarViewer({
+  embedded = false,
+  initialLanguage,
+}: {
+  embedded?: boolean;
+  initialLanguage?: Language;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<LidarScene | null>(null);
   const pendingCloudRef = useRef<CloudFrame | null>(null);
@@ -188,7 +198,7 @@ export function LidarViewer() {
   const pendingScanRef = useRef<CloudFrame | null>(null);
   const pendingPoseRef = useRef<PoseMessage | null>(null);
 
-  const [language, setLanguage] = useState<Language>("zh");
+  const [language, setLanguage] = useState<Language>(initialLanguage ?? "zh");
   const [fps, setFps] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [viewMode, setViewModeState] = useState<ViewMode>("orbit");
@@ -205,14 +215,66 @@ export function LidarViewer() {
   const c = COPY[language];
 
   useEffect(() => {
+    if (initialLanguage) return;
     const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
     if (stored === "en") setLanguage("en");
-  }, []);
+  }, [initialLanguage]);
 
   const chooseLanguage = (next: Language) => {
     setLanguage(next);
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
   };
+
+  useEffect(() => {
+    const receiveLanguage = (event: MessageEvent) => {
+      if (
+        event.origin !== "http://127.0.0.1:5555" &&
+        event.origin !== "http://localhost:5555"
+      ) {
+        return;
+      }
+      const message = event.data as {
+        type?: string;
+        language?: string;
+      } | null;
+      if (
+        message?.type !== "nightwatch-language" ||
+        (message.language !== "zh" && message.language !== "en")
+      ) {
+        return;
+      }
+      setLanguage(message.language);
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, message.language);
+    };
+    window.addEventListener("message", receiveLanguage);
+    return () => window.removeEventListener("message", receiveLanguage);
+  }, []);
+
+  useEffect(() => {
+    if (!embedded) return;
+    const relayViewSwap = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "v" || event.repeat) return;
+      let parentOrigin = "";
+      try {
+        parentOrigin = new URL(document.referrer).origin;
+      } catch {
+        return;
+      }
+      if (
+        parentOrigin !== "http://127.0.0.1:5555" &&
+        parentOrigin !== "http://localhost:5555"
+      ) {
+        return;
+      }
+      event.preventDefault();
+      window.parent.postMessage(
+        { type: "nightwatch-toggle-vision" },
+        parentOrigin,
+      );
+    };
+    window.addEventListener("keydown", relayViewSwap);
+    return () => window.removeEventListener("keydown", relayViewSwap);
+  }, [embedded]);
 
   useEffect(() => {
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
@@ -468,6 +530,50 @@ export function LidarViewer() {
     age === null ? c.noData : age < 0.6 ? c.justNow : `${age.toFixed(1)} ${c.secondsAgo}`;
   const buttonClass =
     "inline-flex min-h-9 items-center justify-center border border-[#8e9aa2] bg-white px-3 font-mono text-[10px] font-bold tracking-[0.08em] text-[#26343d] transition hover:border-[#17232b] hover:bg-[#17232b] hover:text-white disabled:cursor-not-allowed disabled:opacity-35";
+
+  if (embedded) {
+    return (
+      <div className="relative h-dvh min-h-0 overflow-hidden bg-[#04060c]">
+        <canvas
+          ref={canvasRef}
+          className="block h-full w-full cursor-grab active:cursor-grabbing"
+          aria-label={c.viewTitle}
+        />
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between border-b border-[#31414b] bg-[#10171c]/92 px-2 py-1.5 font-mono text-[9px] text-white">
+          <span>▣ {c.mapView}</span>
+          <span className={`border px-1.5 py-0.5 ${STATUS_CLASSES[hud.connState]}`}>
+            ● {statusLabel}
+          </span>
+        </div>
+        <div className="pointer-events-none absolute left-2 top-9 z-10 flex gap-1">
+          {(["orbit", "top"] as ViewMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setViewMode(mode)}
+              className={`pointer-events-auto min-h-7 border border-[#50616c] bg-[#111a20]/90 px-2 font-mono text-[9px] font-bold text-white ${
+                viewMode === mode ? "!border-cyan-300 !bg-cyan-300 !text-[#071015]" : ""
+              }`}
+            >
+              {mode === "orbit" ? c.orbit : c.top}
+            </button>
+          ))}
+        </div>
+        <div className="pointer-events-none absolute inset-x-2 bottom-2 z-10 flex items-end justify-between gap-2">
+          <div className="border border-cyan-800 bg-[#071015]/88 px-2 py-1 font-mono text-[9px] font-bold text-cyan-200 backdrop-blur">
+            {c.mapPoints} {hud.pointCount.toLocaleString()} · {c.fps} {fps.toFixed(0)}
+          </div>
+          <a
+            href={`/lidar?lang=${language}`}
+            target="_top"
+            className="pointer-events-auto border border-yellow-300 bg-yellow-300 px-2 py-1 font-mono text-[9px] font-black text-[#17130a]"
+          >
+            ↗ {c.openFull}
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid min-h-dvh grid-cols-1 grid-rows-[48px_minmax(58vh,1fr)_auto] bg-[#dfe5e8] text-[#1b262d] xl:h-dvh xl:grid-cols-[220px_minmax(0,1fr)_310px] xl:grid-rows-[48px_minmax(0,1fr)_30px]">

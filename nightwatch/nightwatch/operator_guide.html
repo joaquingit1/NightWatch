@@ -315,7 +315,8 @@
           <tr><td><kbd>Space</kbd></td><td data-i18n="keys.stop">紧急停止</td><td data-i18n="keys.stopNote">清空方向并切换手动</td></tr>
           <tr><td><kbd>M</kbd></td><td data-i18n="keys.mode">自主 / 手动切换</td><td data-i18n="keys.modeNote">切换前自动停止</td></tr>
           <tr><td><kbd>F</kbd> / <kbd>N</kbd></td><td data-i18n="keys.fn">立即仰头检测 / 接近最近的人</td><td data-i18n="keys.cruiseOnly">仅巡航模式可用</td></tr>
-          <tr><td><kbd>L</kbd></td><td data-i18n="keys.map">打开三维地图</td><td data-i18n="keys.newTab">在新页面打开</td></tr>
+          <tr><td><kbd>V</kbd></td><td data-i18n="keys.v">切换摄像头 / 三维雷达主画面</td><td data-i18n="keys.vNote">另一画面保留在右下角小窗</td></tr>
+          <tr><td><kbd>L</kbd></td><td data-i18n="keys.map">打开三维地图</td><td data-i18n="keys.newTab">进入完整 Bedroom 标定页</td></tr>
           <tr><td><kbd>1</kbd>–<kbd>8</kbd></td><td data-i18n="keys.actions">站起、趴下、坐下、招手及其他姿态动作</td><td data-i18n="keys.noRepeat">忽略键盘自动重复</td></tr>
         </tbody>
       </table>
@@ -337,7 +338,7 @@
       <span class="section-index">05</span>
       <h2 data-i18n="video.title">视频与疲劳指标</h2>
       <ul>
-        <li data-i18n="video.1">“分析”显示多人脸框和疲劳结果；“原始”显示机器人相机。</li>
+        <li data-i18n="video.1">工作台同时显示摄像头和三维雷达；默认摄像头为主，点击小窗切换按钮或按 V 可交换主画面。</li>
         <li data-i18n="video.2">每个匿名目标显示疲劳指数和质量，低质量结果不会自动触发互动。</li>
         <li data-i18n="video.3">模型断线后自动回退原始视频并清空旧指标，避免把历史结果当成实时结果。</li>
         <li data-i18n="video.4">探索、人员互动、护送和安全保持期间，覆盖层会说明检测暂停原因。</li>
@@ -433,7 +434,8 @@
       'keys.stop': '紧急停止', 'keys.stopNote': '清空方向并切换手动',
       'keys.mode': '自主 / 手动切换', 'keys.modeNote': '切换前自动停止',
       'keys.fn': '立即仰头检测 / 接近最近的人', 'keys.cruiseOnly': '仅巡航模式可用',
-      'keys.map': '打开三维地图', 'keys.newTab': '在新页面打开',
+      'keys.v': '切换摄像头 / 三维雷达主画面', 'keys.vNote': '另一画面保留在右下角小窗',
+      'keys.map': '打开三维地图', 'keys.newTab': '进入完整 Bedroom 标定页',
       'keys.actions': '站起、趴下、坐下、招手及其他姿态动作', 'keys.noRepeat': '忽略键盘自动重复',
       'keys.inputNote': '在机器人对话输入框中打字时，所有快捷键自动禁用，避免文字输入误驱动机器人。',
       'status.title': '如何阅读状态',
@@ -442,7 +444,7 @@
       'status.fatigue': '疲劳检测', 'status.fatigueCopy': '显示运行或暂停，并给出探索、交互、离线等暂停原因。',
       'status.interaction': '交互阶段', 'status.interactionCopy': '显示接近、等待问卷、护送等阶段；等待问卷时同时显示剩余秒数。',
       'video.title': '视频与疲劳指标',
-      'video.1': '“分析”显示多人脸框和疲劳结果；“原始”显示机器人相机。',
+      'video.1': '工作台同时显示摄像头和三维雷达；默认摄像头为主，点击小窗切换按钮或按 V 可交换主画面。',
       'video.2': '每个匿名目标显示疲劳指数和质量，低质量结果不会自动触发互动。',
       'video.3': '模型断线后自动回退原始视频并清空旧指标，避免把历史结果当成实时结果。',
       'video.4': '探索、人员互动、护送和安全保持期间，覆盖层会说明检测暂停原因。',
@@ -501,7 +503,8 @@
       'keys.stop': 'Emergency stop', 'keys.stopNote': 'Clears direction and switches to manual',
       'keys.mode': 'Toggle autonomous / manual', 'keys.modeNote': 'Stops before switching',
       'keys.fn': 'Immediate head-up scan / approach nearest person', 'keys.cruiseOnly': 'Cruise mode only',
-      'keys.map': 'Open the 3D map', 'keys.newTab': 'Opens in a new page',
+      'keys.v': 'Swap camera / 3D lidar primary view', 'keys.vNote': 'The other view stays in the lower-right picture-in-picture',
+      'keys.map': 'Open the 3D map', 'keys.newTab': 'Opens the full Bedroom calibration page',
       'keys.actions': 'Stand, lie down, sit, wave, and other posture actions', 'keys.noRepeat': 'Keyboard auto-repeat ignored',
       'keys.inputNote': 'All keyboard controls are disabled while typing in the robot dialogue field, preventing text entry from driving the robot.',
       'status.title': 'Reading the status panel',
@@ -510,7 +513,7 @@
       'status.fatigue': 'Fatigue detection', 'status.fatigueCopy': 'Shows running or paused and explains exploration, interaction, offline, or safety pauses.',
       'status.interaction': 'Interaction stage', 'status.interactionCopy': 'Shows approach, form wait, and escort stages. The form wait also shows remaining seconds.',
       'video.title': 'Video and fatigue metrics',
-      'video.1': 'Analysis shows multi-face boxes and fatigue results; Raw shows the robot camera.',
+      'video.1': 'The console shows camera and 3D lidar together. Camera is primary by default; use the picture-in-picture control or press V to swap.',
       'video.2': 'Each anonymous subject shows a fatigue index and quality. Low-quality results cannot trigger an interaction.',
       'video.3': 'If the model disconnects, the page falls back to raw video and clears old metrics so historical results never look live.',
       'video.4': 'During exploration, person interaction, escort, or a safety hold, the overlay explains why detection is paused.',

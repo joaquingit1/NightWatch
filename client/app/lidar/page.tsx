@@ -8,10 +8,19 @@ export const metadata: Metadata = {
     "实时显示 Go2 激光雷达点云、累计地图和机器人位姿，并标定全空间唯一 Bedroom。",
 };
 
-export default function LidarPage() {
+export default async function LidarPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ embed?: string; lang?: string }>;
+}) {
+  const params = await searchParams;
+  const initialLanguage = params.lang === "en" ? "en" : params.lang === "zh" ? "zh" : undefined;
   return (
     <main className="fixed inset-0 bg-[#04060c]">
-      <LidarViewer />
+      <LidarViewer
+        embedded={params.embed === "1"}
+        initialLanguage={initialLanguage}
+      />
     </main>
   );
 }
