@@ -533,6 +533,10 @@ When `INTAKE_OPERATOR_KEY` is configured, intake status changes require `X-Intak
 
 ## 验证与测试 / Verification and tests
 
+GitHub Actions（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）在每次 push 和 PR 上运行策略 API 测试、疲劳服务测试（真实推理）和 Web 客户端构建。机器人回归测试依赖本地 DimensionalOS 环境，只在本地运行。
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the policy API tests, the fatigue service tests (real inference), and the web client build on every push and pull request. The robot regression suite depends on a local DimensionalOS environment and runs locally only.
+
 服务端和疲劳服务的测试依赖分别列在各自的 `requirements-dev.txt` 中。
 
 Server and fatigue-service test dependencies are listed in their respective `requirements-dev.txt` files.
