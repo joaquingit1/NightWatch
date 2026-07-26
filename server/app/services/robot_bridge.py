@@ -45,6 +45,15 @@ AUTO_ESCORT_CONFIRMATION = (
     "收到，我带你去休息区，跟我来。 "
     "Got it — follow me, I'll take you to the rest area."
 )
+# The operator-confirmed escort speaks the same confirmation: like the auto
+# path, there is no preceding robot conversation, and a person must never be
+# led away by a robot that said nothing.
+MANUAL_ESCORT_CONFIRMATION = AUTO_ESCORT_CONFIRMATION
+NO_ESCORT_ACK = (
+    "收到，那我不打扰你了。记得好好休息，需要我时再扫我身上的二维码。 "
+    "Got it, I will not keep you. Remember to rest, and scan my QR code "
+    "if you need me."
+)
 AUTO_ESCORT_BUSY_DETAIL = (
     "自动护送已跳过：机器人正忙 | Auto-escort skipped: robot busy"
 )
@@ -308,8 +317,24 @@ class RobotBridge:
         if not self._robot_accepts_intervention():
             return False
         self._policy_task = asyncio.create_task(
-            self._run_intake_escort(response_id, track_id)
+            self._run_intake_escort(
+                response_id,
+                track_id,
+                announce_text=MANUAL_ESCORT_CONFIRMATION,
+            )
         )
+        return True
+
+    def request_care_voice(self) -> bool:
+        """Speak the no-escort acknowledgement; best-effort, never blocks HTTP.
+
+        The operator confirmed a submission that declined an escort, so the
+        only robot action is one caring line. An offline robot just returns
+        False: the acknowledgement itself must still succeed.
+        """
+        if not self._latest_status.get("connected", False):
+            return False
+        asyncio.create_task(self._call_skill("speak", {"text": NO_ESCORT_ACK}))
         return True
 
     def auto_escort_enabled(self) -> bool:

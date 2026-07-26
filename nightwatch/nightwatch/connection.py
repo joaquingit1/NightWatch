@@ -39,6 +39,7 @@ from dimos.robot.unitree.go2.connection import (
     _prefixed,
     make_connection,
 )
+from nightwatch.unitree import _request_succeeded, ensure_motion_ready
 from unitree_webrtc_connect.constants import RTC_TOPIC
 from dimos.utils.logging_config import setup_logger
 
@@ -112,6 +113,7 @@ class GO2Connection(_StockGO2Connection):
                     self.config.g,
                     aes_128_key=self.config.aes_128_key,
                     velocity_api=self.config.velocity_api,
+                    mode=self.config.motion_mode,
                 )
                 break
             except Exception:
@@ -142,6 +144,7 @@ class GO2Connection(_StockGO2Connection):
         self._lidar_pulse_thread: Thread | None = None
         self._last_video_frame_at = 0.0
         self._last_video_rearm_at = 0.0
+        self._locomotion_controller: str | None = None
         self._video_rearm_count = 0
         self._last_lidar_frame_at = 0.0
         self._motion_commanded_until = 0.0
@@ -176,23 +179,13 @@ class GO2Connection(_StockGO2Connection):
             )
             self._camera_info_thread.start()
 
-        if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
-            # Log the observed controller before and after: an unexpected
-            # controller is the difference between "every command is acked"
-            # and "the dog actually walks", and it is otherwise invisible.
-            before = self._motion_mode_name()
-            self.connection.set_motion_mode(self.config.motion_mode)
-            logger.info(
-                "Go2 locomotion controller selected",
-                requested=self.config.motion_mode,
-                before=before,
-                after=self._motion_mode_name(),
-            )
-
-        self.standup()
-        time.sleep(3.0)
-        self._configure_live_connection()
-
+        # Recovery must never depend on the rest of startup succeeding. Every
+        # call below this point talks to the firmware and can block for
+        # minutes on a half-open peer; when the watchdogs were started last,
+        # a single hung request killed camera/lidar recovery for the whole
+        # process (observed live 2026-07-25: GO2Connection/start timed out
+        # after 1200 s, camera stale 12 min, zero watchdog activity, safety
+        # holding on SENSORS_NOT_READY). Start the supervisors FIRST.
         if self.config.lidar and isinstance(self.connection, UnitreeWebRTCConnection):
             self._lidar_pulse_thread = Thread(
                 target=self._lidar_pulse_loop,
@@ -208,6 +201,13 @@ class GO2Connection(_StockGO2Connection):
                 daemon=True,
             )
             self._watchdog_thread.start()
+
+        self._ensure_locomotion_controller()
+        if not ensure_motion_ready(self, force=True):
+            logger.error(
+                "Go2 MCF readiness sequence failed; movement remains fail-stopped"
+            )
+        self._configure_live_connection()
 
     @rpc
     def stop(self) -> None:
@@ -237,10 +237,17 @@ class GO2Connection(_StockGO2Connection):
             recovery.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._reconnect_thread = None
 
+        # Process shutdown is not a posture command. Lying the dog down here
+        # made every restart depend on a second firmware stand-up transaction,
+        # and a rejected StopMove precondition could then strand it down.
+        # Stop commanded velocity, but preserve the operator-visible stance.
         try:
-            self.liedown()
+            self.connection.stop_movement()
         except Exception:
-            logger.warning("liedown on stop failed; continuing teardown", exc_info=True)
+            logger.warning(
+                "movement stop on teardown failed; continuing teardown",
+                exc_info=True,
+            )
 
         with self._connection_lock:
             if self._sensor_subscriptions is not None:
@@ -336,13 +343,22 @@ class GO2Connection(_StockGO2Connection):
 
     def _configure_live_connection(self) -> None:
         try:
-            self.connection.balance_stand()
             if self.config.mode == Go2Mode.RAGE:
                 self.connection.set_rage_mode(True)
-            self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
-            if hasattr(self.connection, "switch_joystick"):
-                self.connection.switch_joystick(True)
-                logger.info("Firmware joystick listening enabled")
+            response = self.publish_request(
+                RTC_TOPIC["OBSTACLES_AVOID"],
+                {
+                    "api_id": 1001,
+                    "parameter": {
+                        "enable": int(self.config.g.obstacle_avoidance)
+                    },
+                },
+            )
+            if not _request_succeeded(response):
+                logger.warning(
+                    "Go2 obstacle-avoidance configuration was rejected",
+                    response=repr(response)[:300],
+                )
         except Exception:
             logger.exception("Go2 post-connect configuration failed")
         # The stream monitor owns the firmware switch and keeps it enabled for
@@ -355,7 +371,14 @@ class GO2Connection(_StockGO2Connection):
 
     def _video_watchdog(self) -> None:
         while not self._lifecycle_stop.wait(WATCHDOG_POLL_S):
-            self._video_recovery_tick(time.monotonic())
+            # One unhandled exception used to kill this thread outright, and
+            # with it every future camera recovery for the life of the
+            # process. Recovery is the last line of defence: it must survive
+            # its own bugs.
+            try:
+                self._video_recovery_tick(time.monotonic())
+            except Exception:
+                logger.exception("video watchdog tick failed; supervisor continues")
 
     def _video_recovery_tick(self, now: float) -> str:
         """Apply one watchdog decision and return it for focused diagnostics."""
@@ -407,6 +430,31 @@ class GO2Connection(_StockGO2Connection):
         )
         self._rearm_video_channel()
         return "rearm"
+
+    def _ensure_locomotion_controller(self) -> bool:
+        """Observe the controller without changing the firmware's MCF mode.
+
+        Go2 firmware 1.1.7+ uses MCF for the sport API. The live robot returns
+        status 7004 for SelectMode("normal"), so startup must not try to switch
+        away from MCF. CheckMode remains useful read-only diagnostics.
+        """
+        if not isinstance(self.connection, UnitreeWebRTCConnection):
+            return True
+        observed = self._motion_mode_name()
+        self._locomotion_controller = observed
+        if observed is None:
+            logger.warning("Go2 locomotion controller could not be observed")
+            return False
+        logger.info(
+            "Go2 locomotion controller observed; preserving firmware mode",
+            observed=observed,
+            velocity_api=(
+                "mcf_sport"
+                if self.config.velocity_api
+                else "wireless_controller"
+            ),
+        )
+        return True
 
     def _motion_mode_name(self) -> str | None:
         """Report the firmware's active locomotion controller, or None.
@@ -504,6 +552,7 @@ class GO2Connection(_StockGO2Connection):
                     self.config.g,
                     aes_128_key=self.config.aes_128_key,
                     velocity_api=self.config.velocity_api,
+                    mode=self.config.motion_mode,
                 )
                 candidate.start()
             except Exception:
@@ -573,11 +622,12 @@ class GO2Connection(_StockGO2Connection):
                 # These subscriptions recreate video track callbacks plus
                 # lidar, odometry, and lowstate delivery on the new peer.
                 self._bind_sensor_streams()
-                if (
-                    self.config.motion_mode
-                    and isinstance(self.connection, UnitreeWebRTCConnection)
-                ):
-                    self.connection.set_motion_mode(self.config.motion_mode)
+                self._ensure_locomotion_controller()
+                if not ensure_motion_ready(self, force=True):
+                    logger.error(
+                        "Go2 MCF readiness failed after WebRTC recovery; "
+                        "movement remains fail-stopped"
+                    )
                 self._configure_live_connection()
                 if self.config.lidar:
                     self._set_lidar_stream(True)
@@ -627,6 +677,12 @@ class GO2Connection(_StockGO2Connection):
             ),
             "lidar_recovering": self._lidar_recovering,
             "motion_commanded": now <= self._motion_commanded_until,
+            "locomotion_controller": self._locomotion_controller,
+            "velocity_wire_api": (
+                "mcf_sport"
+                if self.config.velocity_api
+                else "wireless_controller"
+            ),
         }
 
     @rpc
@@ -733,55 +789,63 @@ class GO2Connection(_StockGO2Connection):
         logger.info("Lidar stream monitor started", publish_hz=LIDAR_PUBLISH_HZ)
         self._set_lidar_stream(True)
         while not self._lifecycle_stop.wait(1.0):
-            now = time.monotonic()
-            age = (
-                now - self._last_lidar_frame_at
-                if self._last_lidar_frame_at
-                else now - self._connected_at
-            )
-            raw_stale = age > (
-                LIDAR_STALE_S if self._last_lidar_frame_at else LIDAR_START_GRACE_S
-            )
-            moving_recently = now <= self._motion_commanded_until
-            # The firmware voxel-map topic is change-driven: while the robot
-            # is stationary, receiving no new cloud is normal.  It is a fault
-            # only if no first cloud arrives, or odometry shows continued
-            # motion without corresponding map updates.
-            stale = raw_stale and (
-                not self._last_lidar_frame_at or moving_recently
-            )
-            if stale and moving_recently:
-                if not self._lidar_stale_while_moving_since:
-                    self._lidar_stale_while_moving_since = now
-            else:
-                self._lidar_stale_while_moving_since = 0.0
-            if stale and not self._lidar_recovering:
-                self._lidar_recovering = True
-                logger.warning(
-                    "Lidar stale during commanded motion; reasserting stream switch",
-                    frame_age_s=round(age, 1),
-                )
-            elif not stale and self._lidar_recovering:
-                self._lidar_recovering = False
-                logger.info("Lidar stream recovered", frame_age_s=round(age, 2))
-            if (
-                self._lidar_stale_while_moving_since
-                and now - self._lidar_stale_while_moving_since
-                > LIDAR_RECONNECT_AFTER_S
-                and not self._reconnecting
-                and not self._lifecycle_stop.is_set()
-            ):
-                logger.error(
-                    "Lidar remained stale after re-arm; preserving shared WebRTC peer",
-                    frame_age_s=round(age, 1),
-                    reconnect_count=self._reconnect_count,
-                )
-                # Report again only after another full bounded interval. The
-                # safety supervisor will hold if navigation inputs are truly
-                # unavailable, but the watchdog must not cause that outage.
-                self._lidar_stale_while_moving_since = now
-                self._set_lidar_stream(True)
-                continue
-            if stale:
-                self._set_lidar_stream(True)
+            try:
+                self._lidar_pulse_tick()
+            except Exception:
+                logger.exception("lidar monitor tick failed; supervisor continues")
         self._set_lidar_stream(False)
+
+    def _lidar_pulse_tick(self) -> None:
+        """One lidar-health decision; see _lidar_pulse_loop for the policy."""
+        # (extracted from the loop so one bad tick cannot kill the supervisor)
+        now = time.monotonic()
+        age = (
+            now - self._last_lidar_frame_at
+            if self._last_lidar_frame_at
+            else now - self._connected_at
+        )
+        raw_stale = age > (
+            LIDAR_STALE_S if self._last_lidar_frame_at else LIDAR_START_GRACE_S
+        )
+        moving_recently = now <= self._motion_commanded_until
+        # The firmware voxel-map topic is change-driven: while the robot
+        # is stationary, receiving no new cloud is normal.  It is a fault
+        # only if no first cloud arrives, or odometry shows continued
+        # motion without corresponding map updates.
+        stale = raw_stale and (
+            not self._last_lidar_frame_at or moving_recently
+        )
+        if stale and moving_recently:
+            if not self._lidar_stale_while_moving_since:
+                self._lidar_stale_while_moving_since = now
+        else:
+            self._lidar_stale_while_moving_since = 0.0
+        if stale and not self._lidar_recovering:
+            self._lidar_recovering = True
+            logger.warning(
+                "Lidar stale during commanded motion; reasserting stream switch",
+                frame_age_s=round(age, 1),
+            )
+        elif not stale and self._lidar_recovering:
+            self._lidar_recovering = False
+            logger.info("Lidar stream recovered", frame_age_s=round(age, 2))
+        if (
+            self._lidar_stale_while_moving_since
+            and now - self._lidar_stale_while_moving_since
+            > LIDAR_RECONNECT_AFTER_S
+            and not self._reconnecting
+            and not self._lifecycle_stop.is_set()
+        ):
+            logger.error(
+                "Lidar remained stale after re-arm; preserving shared WebRTC peer",
+                frame_age_s=round(age, 1),
+                reconnect_count=self._reconnect_count,
+            )
+            # Report again only after another full bounded interval. The
+            # safety supervisor will hold if navigation inputs are truly
+            # unavailable, but the watchdog must not cause that outage.
+            self._lidar_stale_while_moving_since = now
+            self._set_lidar_stream(True)
+            return
+        if stale:
+            self._set_lidar_stream(True)

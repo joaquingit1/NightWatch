@@ -309,16 +309,12 @@ scout = (
     autoconnect(
         unitree_go2,
         # same module name as stock -> dedupe replaces it; adds lidar switch-on.
-        # motion_mode is pinned: the stock default is None, which means the
-        # stack silently inherits whichever locomotion controller the dog
-        # happened to boot into. In the AI/sport controller the firmware
-        # accepts our sport commands and acks them, yet ignores velocity, so
-        # the dog stands still while the planner believes it is driving
-        # (observed live 2026-07-25: sport commands succeed, odometry frozen,
-        # "Robot is stuck" every 8 s). Selecting "normal" on every connect
-        # makes velocity authoritative regardless of how the dog was booted.
+        # Go2 fw 1.1.7+ boots into MCF. Preserve that controller (the live
+        # robot rejects SelectMode("normal") with status 7004) and use MCF's
+        # documented no-reply sport Move packets instead of joystick emulation.
         NightwatchGO2Connection.blueprint(
-            motion_mode=os.environ.get("NIGHTWATCH_MOTION_MODE", "normal"),
+            motion_mode=None,
+            velocity_api=True,
         ),
         # Keep DimensionalOS' 5 cm navigation resolution. The former 10 cm
         # shortcut plus one lidar update/s was too coarse and stale around

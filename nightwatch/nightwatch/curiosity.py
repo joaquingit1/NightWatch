@@ -54,7 +54,6 @@ from nightwatch.unitree import (
     clear_pose_mode,
     ensure_motion_ready,
     pose_mode_latched,
-    set_body_pitch,
     wave_hello,
 )
 
@@ -1234,6 +1233,7 @@ class CuriositySupervisor(Module):
         following = self._is_following()
         nav_state = self._navigation_state()
         mode = self._modes().snapshot(now=now)
+        self._enforce_expression_watchdog(now, mode)
 
         with self._lock:
             self._hand_scan_navigation_idle = nav_state is NavigationState.IDLE
@@ -2959,7 +2959,7 @@ class CuriositySupervisor(Module):
             return False
 
         # This is the one intentional mid-route pause in Sleep Analysis mode.
-        # Stop every autonomous producer before touching body posture. The
+        # Stop every autonomous producer before starting observation. The
         # exploration/patrol mission remains selected and is reacquired on the
         # first tick after cleanup.
         self._stop_face_observation("starting sleep scan")
@@ -2973,20 +2973,14 @@ class CuriositySupervisor(Module):
                 logger.exception("sleep scan navigation cancel failed")
         self._publish_stop()
 
-        # Euler positive pitch raises the nose by lowering the rear relative to
-        # the front. This is the verified Go2 sport API; no joint-level command
-        # is synthesized here.
+        # Keep the normal balanced stance. The former rear-lowering Pose/Euler
+        # sequence could leave MCF accepting commands while refusing to walk.
         try:
             if not ensure_motion_ready(self._connection):
                 raise RuntimeError("motion controller did not accept BalanceStand")
-            self._face_observation_pitch_active = bool(
-                set_body_pitch(
-                    self._connection,
-                    self.config.face_observation_pitch_rad,
-                )
-            )
+            self._face_observation_pitch_active = False
         except Exception:
-            logger.exception("sleep scan rear-lowered posture failed")
+            logger.exception("sleep scan balanced-stance preparation failed")
             self._face_observation_pitch_active = False
 
         self._face_observation_key = None
@@ -3000,10 +2994,8 @@ class CuriositySupervisor(Module):
                 self.config.sleep_scan_duration_s,
             )
         )
-        # ensure_motion_ready's stand sequence above can block for several
-        # seconds. Timing the window from the tick's stale `now` consumed most
-        # of the 7 s budget before the camera was even raised (observed live:
-        # a 2.6 s effective scan). The window starts when the posture is up.
+        # ensure_motion_ready's stand sequence can block for several seconds,
+        # so start the bounded observation window after readiness completes.
         window_start = time.monotonic()
         self._scan_started_at = window_start
         self._face_observation_until = window_start + duration
@@ -3019,7 +3011,7 @@ class CuriositySupervisor(Module):
             kind=self._scan_kind,
             duration_s=duration,
             camera_raised=self._face_observation_pitch_active,
-            posture="rear_lowered_camera_up",
+            posture="balanced_stand_fixed_camera",
         )
         return True
 
@@ -3151,12 +3143,7 @@ class CuriositySupervisor(Module):
                 )
                 self._stop_event.wait(turn_s)
                 self._publish_stop()
-            self._face_observation_pitch_active = bool(
-                set_body_pitch(
-                    self._connection,
-                    self.config.face_observation_pitch_rad,
-                )
-            )
+            self._face_observation_pitch_active = False
         except Exception:
             logger.exception("face observation camera framing failed")
             self._publish_stop()
@@ -3236,16 +3223,6 @@ class CuriositySupervisor(Module):
             except Exception:
                 logger.exception("face approach stop during observation cleanup failed")
         self._publish_stop()
-        # UNCONDITIONAL restore. The raise enters firmware pose mode
-        # (Pose on + Euler), and in pose mode the Go2 moves joints but ignores
-        # every gait/velocity command. Gating this on pitch_active left pose
-        # mode latched whenever the raise partially failed or the flag was
-        # already cleared, freezing walking until a power cycle (observed live
-        # twice on 2026-07-25). The restore is idempotent and cheap.
-        try:
-            set_body_pitch(self._connection, 0.0)
-        except Exception:
-            logger.exception("face observation neutral-pose restore failed")
         subject = getattr(self, "_face_observation_key", None)
         self._face_observation_until = 0.0
         self._face_observation_key = None
@@ -3333,6 +3310,42 @@ class CuriositySupervisor(Module):
         self._curious_follow_started = 0.0
         self._retry_not_before = time.monotonic() + 0.5
 
+    def _enforce_expression_watchdog(self, now: float, mode: Any) -> None:
+        """Never leave a finished gesture owning the body controller.
+
+        A sport gesture (Hello/wave, WiggleHips, ...) hands the body to the
+        firmware, and only the force re-arm that follows it restores a
+        locomotion-ready stance. That cleanup used to live exclusively in the
+        autonomy path, so a gesture fired from the operator console and then
+        followed by Manual Override was never completed: the dog kept the
+        gesture stance and silently ignored every velocity command, including
+        WASD (observed live 2026-07-25: "waved, now nothing responds").
+        Manual takeover also aborts an in-flight gesture immediately, as
+        manual must never be refused or delayed (AGENTS.md invariant 2).
+        """
+        active = getattr(self, "_dog_expression_name", None)
+        if active is None:
+            return
+        manual = getattr(mode, "mode", None) is OperatingMode.MANUAL
+        expired = now >= float(getattr(self, "_dog_expression_deadline", 0.0))
+        if not manual and not expired:
+            return
+        self._dog_expression_name = None
+        self._dog_expression_deadline = 0.0
+        try:
+            ensure_motion_ready(self._connection, force=True)
+        except Exception:
+            logger.exception("expression cleanup re-arm failed")
+        self._retry_not_before = now + 0.5
+        self._motion_watch_started_at = now
+        self._last_motion_ts = now
+        logger.warning(
+            "dog expression cleared outside the autonomy path; stance re-armed",
+            expression=active,
+            manual=manual,
+            expired=expired,
+        )
+
     def _enforce_pose_mode_invariant(self, now: float) -> None:
         """Never let firmware pose mode outlive the scan that entered it.
 
@@ -3345,12 +3358,6 @@ class CuriositySupervisor(Module):
         at a bounded cadence until the firmware acknowledges.
         """
         if not pose_mode_latched():
-            return
-        scan_owns_pose = bool(
-            getattr(self, "_scan_kind", None)
-            or getattr(self, "_face_observation_until", 0.0)
-        )
-        if scan_owns_pose:
             return
         if now < getattr(self, "_pose_clear_not_before", 0.0):
             return

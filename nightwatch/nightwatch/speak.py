@@ -26,9 +26,19 @@ thread synthesizes and plays. The queue holds at most two pending utterances;
 a third drops the oldest, because a robot that queues 30 s of stale speech is
 worse than one that skips a line.
 
+Kokoro synthesis costs ~2 s per line on this machine, which made every
+operator voice button feel laggy. Kokoro output is therefore kept in a
+persistent wav cache (assets/tts_cache, override with
+NIGHTWATCH_TTS_CACHE_DIR, empty disables): a cache hit skips synthesis and
+plays immediately, even on a fresh process before the model is warm. The
+canned operator lines (voice_presets.PRESET_LINES) are pre-synthesized into
+the cache right after kokoro warms, so the console buttons are instant from
+the first click of a fresh install onward.
+
 Named SpeakSkill so blueprint dedupe replaces the stock module.
 """
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -43,6 +53,8 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.utils.logging_config import setup_logger
 
+from nightwatch import voice_presets
+
 logger = setup_logger()
 
 SAY_BIN = shutil.which("say")
@@ -55,8 +67,24 @@ _MAX_PENDING = 2
 # A dead venue network must never hang a speak call.
 _EDGE_TIMEOUT_S = 5.0
 
-_DEFAULT_KOKORO_VOICE = "zf_xiaoxiao"
+# The v1.1-zh repo is required for bilingual lines: only its G2P (version
+# "1.1") routes English words through en_callable. The base Kokoro-82M repo
+# forces the legacy zh G2P, which feeds English to the model as raw letters
+# (unintelligible output, observed July 26).
+_KOKORO_REPO = "hexgrad/Kokoro-82M-v1.1-zh"
+_DEFAULT_KOKORO_VOICE = "zf_001"
 _DEFAULT_EDGE_VOICE = "zh-CN-XiaoxiaoNeural"
+
+# Persistent wav cache for kokoro output, so repeated lines (and the canned
+# operator presets) play instantly instead of re-paying ~2 s of synthesis.
+_DEFAULT_CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets",
+    "tts_cache",
+)
+# Cache only lines the operator console could send (its free-text cap); a
+# pasted essay should not become a permanent multi-megabyte wav.
+_CACHE_TEXT_MAX_CHARS = 200
 
 
 def _chain_for_mode(mode: str | None) -> list[str]:
@@ -189,6 +217,17 @@ class SpeakSkill(_StockSpeakSkill):
             "NIGHTWATCH_TTS_EDGE_VOICE", _DEFAULT_EDGE_VOICE
         )
 
+        self._cache_dir: str | None = (
+            os.environ.get("NIGHTWATCH_TTS_CACHE_DIR", _DEFAULT_CACHE_DIR)
+            or None
+        )
+        if self._cache_dir:
+            try:
+                os.makedirs(self._cache_dir, exist_ok=True)
+            except OSError:
+                logger.exception("TTS cache dir unavailable; caching disabled")
+                self._cache_dir = None
+
         self._backends = {
             b.name: b
             for b in (
@@ -243,10 +282,21 @@ class SpeakSkill(_StockSpeakSkill):
             return
         try:
             t0 = time.monotonic()
-            pipeline = KPipeline(lang_code="z")
-            # First synth pays the lazy voice download + graph warmup; do it now
-            # so the first real utterance is fast.
-            list(pipeline("你好", voice=self._kokoro_voice, speed=1.0))
+            # Official bilingual recipe: a model-free English pipeline turns
+            # English words into phonemes for the zh pipeline via en_callable.
+            en_pipeline = KPipeline(
+                lang_code="a", repo_id=_KOKORO_REPO, model=False
+            )
+
+            def en_callable(text: str) -> str:
+                return next(en_pipeline(text)).phonemes
+
+            pipeline = KPipeline(
+                lang_code="z", repo_id=_KOKORO_REPO, en_callable=en_callable
+            )
+            # First synth pays the lazy voice download + graph warmup; do it
+            # now, with a bilingual line so the English path warms too.
+            list(pipeline("你好 hello", voice=self._kokoro_voice, speed=1.0))
             self._kokoro_pipeline = pipeline
             logger.info(
                 "kokoro warm",
@@ -255,6 +305,75 @@ class SpeakSkill(_StockSpeakSkill):
             )
         except Exception:
             logger.exception("kokoro warmup failed; will use edge/say")
+            return
+        self._prewarm_presets()
+
+    def _prewarm_presets(self) -> None:
+        """Pre-synthesize the canned operator lines into the wav cache.
+
+        Runs on the warmup thread right after kokoro is warm, so the console
+        voice buttons play instantly instead of paying ~2 s of synthesis on
+        every click. Lines already cached from a previous run are skipped.
+        """
+        if not self._cache_dir:
+            return
+        backend = self._backends.get("kokoro")
+        if backend is None:
+            return
+        synthesized = 0
+        t0 = time.monotonic()
+        for text in voice_presets.PRESET_LINES:
+            if self._stopping or self._cached_wav(text) is not None:
+                continue
+            # mkstemp, not _next_path: the counter belongs to the worker
+            # thread and this runs concurrently with it.
+            fd, tmp_path = tempfile.mkstemp(suffix=".wav", dir=self._tmpdir)
+            os.close(fd)
+            try:
+                backend.synth(text, tmp_path)
+                self._store_in_cache(text, tmp_path)
+                synthesized += 1
+            except Exception:
+                logger.exception("Preset prewarm failed", text=text[:60])
+        if synthesized:
+            logger.info(
+                "TTS presets prewarmed",
+                synthesized=synthesized,
+                total=len(voice_presets.PRESET_LINES),
+                prewarm_s=round(time.monotonic() - t0, 2),
+            )
+
+    # ---- wav cache ----------------------------------------------------------
+
+    def _cache_path(self, text: str) -> str:
+        digest = hashlib.sha1(
+            f"{self._kokoro_voice}|{text.strip()}".encode()
+        ).hexdigest()[:16]
+        return os.path.join(self._cache_dir, f"kokoro-{digest}.wav")
+
+    def _cached_wav(self, text: str) -> str | None:
+        if not self._cache_dir or len(text) > _CACHE_TEXT_MAX_CHARS:
+            return None
+        path = self._cache_path(text)
+        try:
+            if os.path.getsize(path) > 0:
+                return path
+        except OSError:
+            pass
+        return None
+
+    def _store_in_cache(self, text: str, wav_path: str) -> str | None:
+        """Move a freshly synthesized wav into the cache; None if not cached."""
+        if not self._cache_dir or len(text) > _CACHE_TEXT_MAX_CHARS:
+            return None
+        target = self._cache_path(text)
+        try:
+            # move (not rename) survives tmpdir and cache on different volumes.
+            shutil.move(wav_path, target)
+            return target
+        except OSError:
+            logger.exception("TTS cache store failed")
+            return None
 
     # ---- queue + worker -----------------------------------------------------
 
@@ -305,7 +424,20 @@ class SpeakSkill(_StockSpeakSkill):
     def _speak_now(self, text: str) -> str | None:
         """Try each backend in order; return the one that spoke, or None."""
         mode = os.environ.get("NIGHTWATCH_TTS", "auto")
-        for name in _chain_for_mode(mode):
+        chain = _chain_for_mode(mode)
+        # A cached kokoro wav beats every backend: no synthesis, and it works
+        # even while the model is still warming up. `say` mode is an explicit
+        # request for `say`, so the kokoro cache stays out of its way.
+        if "kokoro" in chain:
+            cached = self._cached_wav(text)
+            if cached is not None:
+                try:
+                    self._play(cached)
+                    logger.info("SpeakSkill spoke", backend="cache")
+                    return "cache"
+                except Exception:
+                    logger.exception("TTS cache playback failed")
+        for name in chain:
             backend = self._backends.get(name)
             if backend is None or not backend.ready():
                 continue
@@ -322,6 +454,8 @@ class SpeakSkill(_StockSpeakSkill):
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 continue
+            if name == "kokoro" and produced is not None:
+                produced = self._store_in_cache(text, produced) or produced
             try:
                 if produced is not None:
                     self._play(produced)

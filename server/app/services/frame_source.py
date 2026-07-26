@@ -109,6 +109,9 @@ class FrameSource(ABC):
     @abstractmethod
     def get_annotated_frame(self) -> np.ndarray: ...
 
+    def get_pov_sample(self) -> tuple[np.ndarray, float | None]:
+        return self.get_pov_frame(), None
+
     def get_jpeg_frame(self, annotated: bool = False) -> bytes:
         frame = (
             self.get_annotated_frame()
@@ -123,6 +126,11 @@ class FrameSource(ABC):
         if not ok:
             raise RuntimeError("failed to encode jpeg frame")
         return buffer.tobytes()
+
+    def get_jpeg_sample(
+        self, annotated: bool = False
+    ) -> tuple[bytes, float | None]:
+        return self.get_jpeg_frame(annotated), None
 
     def close(self) -> None:
         return None
@@ -172,6 +180,9 @@ class StubFrameSource(FrameSource):
     def get_pov_frame(self) -> np.ndarray:
         return self._base_frame()
 
+    def get_pov_sample(self) -> tuple[np.ndarray, float | None]:
+        return self._base_frame(), time.time()
+
     def get_annotated_frame(self) -> np.ndarray:
         frame = self._base_frame()
         if self._score_provider is not None:
@@ -209,10 +220,14 @@ class WebcamFrameSource(FrameSource):
         width: int = 960,
         height: int = 540,
         score_provider: Callable[[], FatigueFrame] | None = None,
+        annotated_sample_provider: (
+            Callable[[], tuple[bytes, float] | None] | None
+        ) = None,
     ) -> None:
         self.width = width
         self.height = height
         self._score_provider = score_provider
+        self._annotated_sample_provider = annotated_sample_provider
         backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
         self._cap = cv2.VideoCapture(device, backend)
         if self._cap.isOpened():
@@ -221,6 +236,7 @@ class WebcamFrameSource(FrameSource):
 
         self._lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
+        self._latest_capture_ts: float | None = None
         self._stopped = False
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
@@ -238,6 +254,7 @@ class WebcamFrameSource(FrameSource):
             frame = cv2.flip(frame, 1)
             with self._lock:
                 self._latest_frame = frame
+                self._latest_capture_ts = time.time()
 
     def close(self) -> None:
         self._stopped = True
@@ -277,6 +294,23 @@ class WebcamFrameSource(FrameSource):
     def get_pov_frame(self) -> np.ndarray:
         return self._read_frame()
 
+    def get_pov_sample(self) -> tuple[np.ndarray, float | None]:
+        frame = self._read_frame()
+        with self._lock:
+            capture_ts = self._latest_capture_ts
+        return frame, capture_ts
+
+    def get_jpeg_sample(
+        self, annotated: bool = False
+    ) -> tuple[bytes, float | None]:
+        if annotated and self._annotated_sample_provider is not None:
+            sample = self._annotated_sample_provider()
+            if sample is not None:
+                return sample
+        with self._lock:
+            capture_ts = self._latest_capture_ts
+        return super().get_jpeg_frame(annotated), capture_ts
+
     def get_annotated_frame(self) -> np.ndarray:
         frame = self._read_frame()
         if self._score_provider is not None:
@@ -294,17 +328,23 @@ class MjpegFrameSource(FrameSource):
         width: int = 960,
         height: int = 540,
         score_provider: Callable[[], FatigueFrame] | None = None,
+        annotated_sample_provider: (
+            Callable[[], tuple[bytes, float] | None] | None
+        ) = None,
     ) -> None:
         self.url = url
         self.width = width
         self.height = height
         self._score_provider = score_provider
+        self._annotated_sample_provider = annotated_sample_provider
         self._lock = threading.Lock()
         self._decode_lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
         self._latest_jpeg: bytes | None = None
+        self._latest_capture_ts: float | None = None
         self._latest_jpeg_seq = 0
         self._decoded_jpeg_seq = -1
+        self._decoded_capture_ts: float | None = None
         self._error_message: str | None = "Connecting to robot camera..."
         self._stopped = False
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -339,9 +379,34 @@ class MjpegFrameSource(FrameSource):
                             buffer = buffer[end + 2 :]
                             continue
                         jpeg = buffer[start : end + 2]
+                        capture_ts: float | None = None
+                        boundary = buffer.rfind(b"--frame", 0, start)
+                        if boundary >= 0:
+                            header_end = buffer.find(
+                                b"\r\n\r\n", boundary, start
+                            )
+                            if header_end >= 0:
+                                for line in buffer[
+                                    boundary:header_end
+                                ].split(b"\r\n"):
+                                    if line.lower().startswith(
+                                        b"x-capture-timestamp:"
+                                    ):
+                                        try:
+                                            capture_ts = float(
+                                                line.split(b":", 1)[1].strip()
+                                            )
+                                        except ValueError:
+                                            capture_ts = None
+                                        break
                         buffer = buffer[end + 2 :]
                         with self._lock:
                             self._latest_jpeg = jpeg
+                            self._latest_capture_ts = (
+                                capture_ts
+                                if capture_ts is not None
+                                else time.time()
+                            )
                             self._latest_jpeg_seq += 1
             except Exception:  # noqa: BLE001 - reconnect loop
                 self._error_message = "Robot camera unavailable"
@@ -353,13 +418,35 @@ class MjpegFrameSource(FrameSource):
         self._thread.join(timeout=2.0)
 
     def get_jpeg_frame(self, annotated: bool = False) -> bytes:
+        return self.get_jpeg_sample(annotated)[0]
+
+    def get_jpeg_sample(
+        self, annotated: bool = False
+    ) -> tuple[bytes, float | None]:
+        if annotated and self._annotated_sample_provider is not None:
+            sample = self._annotated_sample_provider()
+            if sample is not None:
+                return sample
         if annotated:
-            return super().get_jpeg_frame(annotated=True)
+            frame, capture_ts = self.get_pov_sample()
+            if self._score_provider is not None:
+                _draw_all_fatigue_overlays(
+                    frame, self._score_provider(), self.height
+                )
+            ok, buffer = cv2.imencode(
+                ".jpg",
+                frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), 72],
+            )
+            if not ok:
+                raise RuntimeError("failed to encode jpeg frame")
+            return buffer.tobytes(), capture_ts
         with self._lock:
             jpeg = self._latest_jpeg
+            capture_ts = self._latest_capture_ts
         if jpeg is not None:
-            return jpeg
-        return super().get_jpeg_frame(annotated=False)
+            return jpeg, capture_ts
+        return super().get_jpeg_frame(annotated=False), capture_ts
 
     def _error_frame(self, message: str) -> np.ndarray:
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
@@ -376,7 +463,7 @@ class MjpegFrameSource(FrameSource):
         )
         return frame
 
-    def _read_frame(self) -> np.ndarray:
+    def _read_frame(self) -> tuple[np.ndarray, float | None]:
         # The upstream robot feed may run at 20-30 fps, but analysis and the
         # annotated UI consume at a much lower rate. Decoding and resizing
         # every incoming JPEG used CPU for frames nobody ever observed.
@@ -388,6 +475,10 @@ class MjpegFrameSource(FrameSource):
                 jpeg = self._latest_jpeg
                 jpeg_seq = self._latest_jpeg_seq
                 decoded_seq = self._decoded_jpeg_seq
+                capture_ts = getattr(self, "_latest_capture_ts", None)
+                decoded_capture_ts = getattr(
+                    self, "_decoded_capture_ts", None
+                )
                 error = self._error_message
 
             if jpeg is not None and jpeg_seq != decoded_seq:
@@ -403,19 +494,25 @@ class MjpegFrameSource(FrameSource):
                     with self._lock:
                         self._latest_frame = decoded
                         self._decoded_jpeg_seq = jpeg_seq
+                        self._decoded_capture_ts = capture_ts
                     frame = decoded
+                    decoded_capture_ts = capture_ts
 
             if frame is None:
-                return self._error_frame(
-                    error or "Waiting for robot camera"
+                return (
+                    self._error_frame(error or "Waiting for robot camera"),
+                    None,
                 )
-            return frame.copy()
+            return frame.copy(), decoded_capture_ts
 
     def get_pov_frame(self) -> np.ndarray:
+        return self._read_frame()[0]
+
+    def get_pov_sample(self) -> tuple[np.ndarray, float | None]:
         return self._read_frame()
 
     def get_annotated_frame(self) -> np.ndarray:
-        frame = self._read_frame()
+        frame = self._read_frame()[0]
         if self._score_provider is not None:
             fatigue = self._score_provider()
             _draw_all_fatigue_overlays(frame, fatigue, self.height)
@@ -428,6 +525,9 @@ RobotCameraFrameSource = MjpegFrameSource
 def create_frame_source(
     camera_source: str,
     score_provider: Callable[[], FatigueFrame] | None = None,
+    annotated_sample_provider: (
+        Callable[[], tuple[bytes, float] | None] | None
+    ) = None,
     robot_camera_url: str | None = None,
     insta360_mjpeg_url: str | None = None,
 ) -> FrameSource:
@@ -436,12 +536,20 @@ def create_frame_source(
 
     if camera_source == "insta360":
         url = insta360_mjpeg_url or "http://127.0.0.1:5556/video"
-        return MjpegFrameSource(url=url, score_provider=score_provider)
+        return MjpegFrameSource(
+            url=url,
+            score_provider=score_provider,
+            annotated_sample_provider=annotated_sample_provider,
+        )
 
     if camera_source == "robot":
         if not robot_camera_url:
             raise ValueError("robot_camera_url is required when CAMERA_SOURCE=robot")
-        return MjpegFrameSource(url=robot_camera_url, score_provider=score_provider)
+        return MjpegFrameSource(
+            url=robot_camera_url,
+            score_provider=score_provider,
+            annotated_sample_provider=annotated_sample_provider,
+        )
 
     device: int | str
     if camera_source == "webcam":
@@ -451,4 +559,8 @@ def create_frame_source(
     else:
         device = camera_source
 
-    return WebcamFrameSource(device=device, score_provider=score_provider)
+    return WebcamFrameSource(
+        device=device,
+        score_provider=score_provider,
+        annotated_sample_provider=annotated_sample_provider,
+    )

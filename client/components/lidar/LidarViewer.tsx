@@ -55,6 +55,9 @@ export function LidarViewer() {
   const [zoneBusy, setZoneBusy] = useState(false);
   const [zoneError, setZoneError] = useState<string | null>(null);
   const [controlVisible, setControlVisible] = useState(false);
+  const [operatorUrl, setOperatorUrl] = useState(
+    "http://localhost:5555/operator"
+  );
   const [robot, setRobot] = useState<{
     enabled?: boolean;
     connected?: boolean;
@@ -78,6 +81,10 @@ export function LidarViewer() {
   } | null>(null);
   const [commandBusy, setCommandBusy] = useState(false);
   const [commandMessage, setCommandMessage] = useState("");
+
+  useEffect(() => {
+    setOperatorUrl(`http://${window.location.hostname}:5555/operator`);
+  }, []);
 
   const hud = useLidarSocket({
     onCloud: (frame) => {
@@ -479,12 +486,12 @@ export function LidarViewer() {
             >
               {viewMode === "pov" ? "ROBOT EYES" : "ORBIT VIEW"}
             </button>
-            <Link
-              href="/"
+            <a
+              href={operatorUrl}
               className="pointer-events-auto rounded-md border border-cyan-500/20 bg-black/40 px-3 py-1.5 text-cyan-300/70 backdrop-blur transition-colors hover:border-cyan-400/50 hover:text-cyan-200"
             >
               &larr; ANALYSIS
-            </Link>
+            </a>
           </div>
         </div>
 
@@ -555,7 +562,7 @@ export function LidarViewer() {
                 SCAN NOW
               </button>
               <a
-                href="http://localhost:5555/operator"
+                href={operatorUrl}
                 className="flex min-h-9 items-center justify-center border border-red-400/40 bg-red-400/10 px-2 py-2 text-center text-[10px] text-red-200"
               >
                 MANUAL CONSOLE

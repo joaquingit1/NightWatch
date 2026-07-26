@@ -409,7 +409,7 @@
           </div>
         </div>
         <div class="vision-stage">
-          <img id="robotVideo" alt="机器人相机视频" data-i18n-alt="video.alt">
+          <img id="robotVideo" src="/video_feed/camera" alt="机器人相机视频" data-i18n-alt="video.alt">
           <div id="videoOverlay" class="overlay"></div>
         </div>
       </section>
@@ -528,6 +528,15 @@
     <button class="primary" onclick="resolveMapPrompt(false)"><span data-i18n="dialog.cruise">现在开始巡航</span></button>
   </div>
 </dialog>
+<dialog id="intakeDialog">
+  <h2 data-i18n="intake.heading">收到新的问卷提交</h2>
+  <p id="intakeSummary"></p>
+  <p id="intakeError" style="color:#c62828" hidden></p>
+  <div class="row">
+    <button id="intakeDismiss" onclick="dismissIntakePrompt()"><span data-i18n="intake.dismiss">忽略</span></button>
+    <button id="intakeConfirm" class="primary" onclick="confirmIntakePrompt()">确认</button>
+  </div>
+</dialog>
 <div class="safety-bar" aria-label="Persistent operating mode and emergency controls">
   <button class="mode-shortcut" data-operating-mode="autonomous" onclick="setOperatingMode('autonomous')">Autonomous</button>
   <button class="mode-shortcut" data-operating-mode="sleep_analysis" onclick="setOperatingMode('sleep_analysis')">Sleep Analysis</button>
@@ -543,6 +552,7 @@
   const video = document.getElementById('robotVideo');
   const videoOverlay = document.getElementById('videoOverlay');
   const mapDialog = document.getElementById('mapDialog');
+  const intakeDialog = document.getElementById('intakeDialog');
   const LANGUAGE_STORAGE_KEY = 'nightwatch.operator.language';
   const translations = {
     zh: {
@@ -650,6 +660,15 @@
       'chat.hint': '输入框聚焦时所有键盘控制都会禁用。',
       'chat.you': '你',
       'chat.robot': '机器人',
+      'intake.heading': '收到新的问卷提交',
+      'intake.anonymous': '匿名访客',
+      'intake.tired': '有点累',
+      'intake.energized': '还精神',
+      'intake.summary.escort': '{alias}（{tired}）填写了问卷，希望被带去休息。确认后机器人会先语音播报，然后带 TA 前往最近的休息区。',
+      'intake.summary.noEscort': '{alias}（{tired}）填写了问卷，不需要带去休息。确认后机器人会播放一句关怀语音。',
+      'intake.confirmEscort': '确认并护送',
+      'intake.confirmVoice': '确认并播报',
+      'intake.dismiss': '忽略',
       'dialog.heading': '地图探索已完成',
       'dialog.prefix': '将在',
       'dialog.suffix': '秒后自动切换到巡航模式。你也可以继续探索，等待出现新的未知区域。',
@@ -658,6 +677,8 @@
       'overlay.modelOffline': '疲劳模型离线，已回退到原始视频',
       'overlay.paused': '疲劳检测暂停：{reason}',
       'fatigue.running': '运行',
+      'fatigue.displayOnly': '画面分析中 · 自动干预暂停（{reason}）',
+      'fatigue.offline': '模型离线',
       'fatigue.paused': '暂停 · {reason}',
       'fatigue.policy': '策略',
       'fatigue.policyControl': '策略控制',
@@ -839,6 +860,15 @@
       'chat.hint': 'All keyboard controls are disabled while the input field is focused.',
       'chat.you': 'you',
       'chat.robot': 'robot',
+      'intake.heading': 'New questionnaire received',
+      'intake.anonymous': 'Anonymous visitor',
+      'intake.tired': 'tired',
+      'intake.energized': 'energized',
+      'intake.summary.escort': '{alias} ({tired}) submitted the form and wants to rest. Confirming plays a voice line, then the robot escorts them to the nearest rest area.',
+      'intake.summary.noEscort': '{alias} ({tired}) submitted the form and does not want an escort. Confirming plays one caring voice line.',
+      'intake.confirmEscort': 'Confirm and escort',
+      'intake.confirmVoice': 'Confirm and speak',
+      'intake.dismiss': 'Dismiss',
       'dialog.heading': 'Map exploration complete',
       'dialog.prefix': 'Cruise mode will start automatically in',
       'dialog.suffix': 'seconds. You can also keep exploring and wait for new unknown areas.',
@@ -847,6 +877,8 @@
       'overlay.modelOffline': 'Fatigue model offline; using the raw video feed',
       'overlay.paused': 'Fatigue detection paused: {reason}',
       'fatigue.running': 'Running',
+      'fatigue.displayOnly': 'Analyzing video · intervention paused ({reason})',
+      'fatigue.offline': 'Model offline',
       'fatigue.paused': 'Paused · {reason}',
       'fatigue.policy': 'Policy',
       'fatigue.policyControl': 'Policy control',
@@ -926,7 +958,9 @@
   };
   let statusSnapshot = {};
   let videoMode = 'analysis';
-  let analysisFallback = false;
+  let modelOnline = false;
+  let activeVideoSource = 'raw';
+  let analysisRetryAt = 0;
   // Epoch-based start keeps packets ordered across page reloads and old tabs.
   let manualSequence = Date.now() * 1000;
   let movementTimer = null;
@@ -974,7 +1008,7 @@
   function renderPeople() {
     const box = document.getElementById('people');
     box.innerHTML = '';
-    if (!serverOnline) {
+    if (!modelOnline) {
       const row = document.createElement('div'); row.className = 'person';
       const text = document.createElement('span'); text.textContent = t('people.offline');
       row.appendChild(text); box.appendChild(row); return;
@@ -1012,9 +1046,13 @@
     setText('owner', enumText('owner', status.owner));
     setText(
       'fatigue',
-      status.fatigue_detection === 'enabled'
+      !modelOnline
+        ? t('fatigue.offline')
+        : status.fatigue_detection === 'enabled'
         ? t('fatigue.running')
-        : t('fatigue.paused', {reason: pauseReason(status.fatigue_pause_reason)})
+        : t('fatigue.displayOnly', {
+            reason: pauseReason(status.fatigue_pause_reason)
+          })
     );
     const interactionState = policyInteraction?.state || status.interaction_state;
     const interactionText = enumText('interaction', interactionState);
@@ -1028,18 +1066,16 @@
     setText('navigation', enumText('navigation', status.navigation));
     setText('mapPhase', enumText('map', status.map_phase));
     setText('cameraAge', status.camera_age_ms == null ? null : Math.round(status.camera_age_ms) + ' ms');
-    videoOverlay.style.display = status.fatigue_detection === 'enabled' && !analysisFallback ? 'none' : 'block';
+    const analysisFallback =
+      videoMode === 'analysis' && activeVideoSource !== 'analysis';
+    videoOverlay.style.display = analysisFallback ? 'block' : 'none';
     if (analysisFallback) {
       videoOverlay.textContent = t('overlay.modelOffline');
-    } else if (status.fatigue_detection !== 'enabled') {
-      videoOverlay.textContent = t('overlay.paused', {
-        reason: pauseReason(status.fatigue_pause_reason || 'policy_control')
-      });
     }
     const robotConnected = status.robot_connected !== false;
     setLinkState(
       robotConnected
-        ? (serverOnline ? 'link.onlineBoth' : 'link.robotOnly')
+        ? (modelOnline ? 'link.onlineBoth' : 'link.robotOnly')
         : 'link.offlinePreview'
     );
   }
@@ -1086,16 +1122,26 @@
   }
   function setVideoMode(mode) {
     videoMode = mode;
-    analysisFallback = false;
     document.getElementById('analysisMode').classList.toggle('active', mode === 'analysis');
     document.getElementById('rawMode').classList.toggle('active', mode === 'raw');
-    video.onerror = mode === 'analysis' ? () => {
-      video.onerror = null; video.src = RAW_VIDEO;
-      analysisFallback = true;
-      videoOverlay.style.display = 'block';
-      videoOverlay.textContent = t('overlay.modelOffline');
+    syncVideoSource();
+    renderStatusValues(statusSnapshot);
+  }
+  function activateVideoSource(source) {
+    if (activeVideoSource === source) return;
+    activeVideoSource = source;
+    video.onerror = source === 'analysis' ? () => {
+      analysisRetryAt = Date.now() + 3000;
+      activeVideoSource = '';
+      activateVideoSource('raw');
+      renderStatusValues(statusSnapshot);
     } : null;
-    video.src = (mode === 'analysis' ? ANALYSIS_VIDEO : RAW_VIDEO) + '?t=' + Date.now();
+    video.src = (source === 'analysis' ? ANALYSIS_VIDEO : RAW_VIDEO) + '?t=' + Date.now();
+  }
+  function syncVideoSource() {
+    const analysisReady =
+      videoMode === 'analysis' && modelOnline && Date.now() >= analysisRetryAt;
+    activateVideoSource(analysisReady ? 'analysis' : 'raw');
   }
   function setText(id, value) { document.getElementById(id).textContent = value == null || value === '' ? '—' : value; }
   function line(css, text, roleKey) {
@@ -1321,6 +1367,78 @@
     if (document.hidden) stopManual();
   });
 
+  // --- Intake confirmation dialog -------------------------------------------
+  // The policy server queues every unbound questionnaire submission (public
+  // Tencent form or booth QR) in an operator inbox. The console polls it and
+  // pops one dialog at a time, oldest first; confirming PATCHes the record to
+  // "acknowledged", which makes the robot speak (and escort when requested).
+  let intakeInbox = [];
+  let currentIntakeId = null;
+  let intakeActionInFlight = false;
+
+  async function refreshIntakeInbox() {
+    try {
+      const response = await fetch(API_BASE + '/api/form/operator/inbox', {cache:'no-store'});
+      if (!response.ok) throw new Error();
+      const data = await response.json();
+      intakeInbox = Array.isArray(data.items) ? data.items : [];
+    } catch (_) {
+      intakeInbox = [];
+    }
+    renderIntakePrompt();
+  }
+
+  function renderIntakePrompt() {
+    if (intakeActionInFlight) return;
+    const next = intakeInbox[0] || null;
+    if (!next) {
+      if (intakeDialog.open) intakeDialog.close();
+      currentIntakeId = null;
+      return;
+    }
+    if (currentIntakeId !== next.response_id) {
+      currentIntakeId = next.response_id;
+      document.getElementById('intakeError').hidden = true;
+    }
+    // Recomputed on every poll so a language switch retranslates the open dialog.
+    const alias = next.name_alias || t('intake.anonymous');
+    const tired = t(next.tiredness === 'tired' ? 'intake.tired' : 'intake.energized');
+    const summaryKey = next.wants_escort ? 'intake.summary.escort' : 'intake.summary.noEscort';
+    document.getElementById('intakeSummary').textContent = t(summaryKey, {alias, tired});
+    document.getElementById('intakeConfirm').textContent =
+      t(next.wants_escort ? 'intake.confirmEscort' : 'intake.confirmVoice');
+    if (!intakeDialog.open) intakeDialog.showModal();
+  }
+
+  async function resolveIntakePrompt(status) {
+    if (!currentIntakeId || intakeActionInFlight) return;
+    intakeActionInFlight = true;
+    const errorEl = document.getElementById('intakeError');
+    errorEl.hidden = true;
+    try {
+      const response = await fetch(`${API_BASE}/api/form/responses/${currentIntakeId}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || t('error.requestRejected'));
+      intakeInbox = intakeInbox.filter(item => item.response_id !== currentIntakeId);
+      currentIntakeId = null;
+      intakeDialog.close();
+    } catch (err) {
+      // A busy or offline robot answers 409; the record stays pending and in
+      // the inbox, so show why and let the operator retry or dismiss.
+      errorEl.textContent = String(err.message || err);
+      errorEl.hidden = false;
+    } finally {
+      intakeActionInFlight = false;
+      renderIntakePrompt();
+    }
+  }
+  function confirmIntakePrompt() { void resolveIntakePrompt('acknowledged'); }
+  function dismissIntakePrompt() { void resolveIntakePrompt('declined'); }
+
   async function refreshPolicyStatus() {
     try {
       const [robotResponse, scoreResponse] = await Promise.all([
@@ -1331,8 +1449,10 @@
       const robot = await robotResponse.json();
       const score = await scoreResponse.json();
       serverOnline = true;
+      modelOnline = score.source_status === 'live';
       autoEscortEnabled = robot.auto_escort_enabled === true;
       latestPeople = Array.isArray(score.people) && score.people.length ? score.people : (score.person_id ? [score] : []);
+      syncVideoSource();
       renderPeople();
       if (robot.active_interaction?.remaining_s != null) {
         policyInteraction = {
@@ -1347,11 +1467,13 @@
       renderStatusValues(statusSnapshot);
     } catch (_) {
       serverOnline = false;
+      modelOnline = false;
       // Unknown state reads as OFF: the console must never show an armed
       // switch it cannot confirm with the policy server.
       autoEscortEnabled = false;
       latestPeople = [];
       policyInteraction = null;
+      syncVideoSource();
       renderPeople();
       renderStatusValues(statusSnapshot);
     }
@@ -1381,7 +1503,7 @@
       const robotConnected = status.robot_connected !== false;
       document.getElementById('linkState').style.color = robotConnected ? '#090909' : '#ffffff';
       document.getElementById('linkState').style.background = robotConnected
-        ? (serverOnline ? '#9fe2c2' : '#f2e84b')
+        ? (modelOnline ? '#9fe2c2' : '#f2e84b')
         : '#e13123';
       if (!robotConnected) stopMovement();
       if (status.hold_reason) setStatusKey('status.robotHold', {detail: pauseReason(status.hold_reason)});
@@ -1410,9 +1532,10 @@
   });
   setLanguage(uiLanguage);
   setVideoMode('analysis');
-  refreshStatus(); refreshPolicyStatus();
+  refreshStatus(); refreshPolicyStatus(); refreshIntakeInbox();
   window.setInterval(refreshStatus, 1000);
   window.setInterval(refreshPolicyStatus, 1000);
+  window.setInterval(refreshIntakeInbox, 1500);
 </script>
 </body>
 </html>

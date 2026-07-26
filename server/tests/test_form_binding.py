@@ -3,8 +3,18 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from app.routers.form import IntakeSubmitRequest, get_form_schema, submit_intake
+import pytest
+from fastapi import HTTPException
+
+from app.routers.form import (
+    IntakeStatusUpdate,
+    IntakeSubmitRequest,
+    get_form_schema,
+    submit_intake,
+    update_response_status,
+)
 from app.services.intake_db import IntakeDatabase
+from app.services.operator_inbox import OperatorInbox
 from app.services.robot_bridge import RobotBridge, SkillResult
 
 
@@ -23,6 +33,10 @@ class Bridge:
         # (which owns the switch state) instead of deciding on its own.
         self.auto_escort_asks: list[tuple[str, str]] = []
         self.auto_escort_dispatches: list[tuple[str, str]] = []
+        self.intake_escort_dispatches: list[tuple[str, str]] = []
+        self.intake_escort_accepts = True
+        self.care_voice_requests = 0
+        self.care_voice_accepts = True
 
     def active_intake(self):
         return self.active
@@ -40,6 +54,16 @@ class Bridge:
         self.auto_escort_dispatches.append((response_id, track_id))
         return True
 
+    def request_intake_escort(self, response_id: str, track_id: str) -> bool:
+        if not self.intake_escort_accepts:
+            return False
+        self.intake_escort_dispatches.append((response_id, track_id))
+        return True
+
+    def request_care_voice(self) -> bool:
+        self.care_voice_requests += 1
+        return self.care_voice_accepts
+
 
 class Ledger:
     def register_intake(self, **_kwargs) -> None:
@@ -55,6 +79,8 @@ def _request(tmp_path, bridge: Bridge | None):
                 robot_bridge=bridge,
                 intake_db=db,
                 ledger=Ledger(),
+                operator_inbox=OperatorInbox(),
+                settings=None,
             )
         )
     )
@@ -304,3 +330,166 @@ def test_submission_retry_is_idempotent(tmp_path) -> None:
     assert retry["response_id"] == first["response_id"]
     assert retry["duplicate"] is True
     assert len(request.app.state.intake_db.list_latest()) == 1
+
+
+# --- Operator confirmation inbox (workbench popup) ---------------------------
+
+
+def _submit(request, *, session_id="public-session-999", wants_escort=True):
+    payload = IntakeSubmitRequest(
+        session_id=session_id,
+        tiredness="tired",
+        wants_escort=wants_escort,
+    )
+    return asyncio.run(submit_intake(request, payload))
+
+
+def test_unbound_submissions_land_in_the_operator_inbox(tmp_path) -> None:
+    # Both answers need a human decision: escort requests wait for the
+    # confirm-and-escort dialog, declined escorts for the confirm-and-speak one.
+    bridge = Bridge()
+    request = _request(tmp_path, bridge)
+
+    wants = _submit(request, wants_escort=True)
+    declines = _submit(request, session_id="public-session-888", wants_escort=False)
+
+    items = request.app.state.operator_inbox.list()
+    assert [item["response_id"] for item in items] == [
+        wants["response_id"],
+        declines["response_id"],
+    ]
+    assert [item["wants_escort"] for item in items] == [True, False]
+
+
+def test_bound_and_auto_dispatched_submissions_skip_the_inbox(tmp_path) -> None:
+    bridge = Bridge(auto_escort_enabled=True)
+    request = _request(tmp_path, bridge)
+    schema = asyncio.run(get_form_schema(request, s=None))
+    bound_payload = IntakeSubmitRequest(
+        session_id="session-active-123",
+        interaction_id=schema["interaction_id"],
+        interaction_token=schema["interaction_token"],
+        tiredness="tired",
+        wants_escort=True,
+    )
+
+    bound = asyncio.run(submit_intake(request, bound_payload))
+    auto = _submit(request, wants_escort=True)
+
+    assert bound["bound_to_robot"] is True
+    assert auto["auto_escort_dispatched"] is True
+    # The robot conversation and the armed auto-escort already own these; a
+    # popup on top would double-handle the same person.
+    assert request.app.state.operator_inbox.list() == []
+
+
+def test_acknowledged_escort_dispatches_with_voice_and_clears_inbox(
+    tmp_path,
+) -> None:
+    bridge = Bridge()
+    request = _request(tmp_path, bridge)
+    submitted = _submit(request, wants_escort=True)
+
+    result = asyncio.run(
+        update_response_status(
+            submitted["response_id"],
+            IntakeStatusUpdate(status="acknowledged"),
+            request,
+        )
+    )
+
+    assert result["robot_dispatched"] is True
+    # The escort task announces out loud before moving (announce_text inside
+    # request_intake_escort), so no separate voice dispatch happens here.
+    assert result["voice_dispatched"] is False
+    assert bridge.intake_escort_dispatches == [
+        (submitted["response_id"], "public-session-999")
+    ]
+    assert request.app.state.operator_inbox.list() == []
+
+
+def test_acknowledged_escort_conflict_keeps_the_inbox_entry(tmp_path) -> None:
+    bridge = Bridge()
+    bridge.intake_escort_accepts = False
+    request = _request(tmp_path, bridge)
+    submitted = _submit(request, wants_escort=True)
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            update_response_status(
+                submitted["response_id"],
+                IntakeStatusUpdate(status="acknowledged"),
+                request,
+            )
+        )
+
+    assert excinfo.value.status_code == 409
+    # Still pending and still prompting: the operator retries once the robot
+    # frees up, or dismisses explicitly.
+    assert request.app.state.intake_db.get(submitted["response_id"]).status == "pending"
+    assert [item["response_id"] for item in request.app.state.operator_inbox.list()] == [
+        submitted["response_id"]
+    ]
+
+
+def test_acknowledged_no_escort_plays_care_voice_and_clears_inbox(
+    tmp_path,
+) -> None:
+    bridge = Bridge()
+    request = _request(tmp_path, bridge)
+    submitted = _submit(request, wants_escort=False)
+
+    result = asyncio.run(
+        update_response_status(
+            submitted["response_id"],
+            IntakeStatusUpdate(status="acknowledged"),
+            request,
+        )
+    )
+
+    assert result["robot_dispatched"] is False
+    assert result["voice_dispatched"] is True
+    assert bridge.care_voice_requests == 1
+    assert bridge.intake_escort_dispatches == []
+    assert request.app.state.operator_inbox.list() == []
+
+
+def test_offline_robot_does_not_block_the_no_escort_acknowledgement(
+    tmp_path,
+) -> None:
+    bridge = Bridge()
+    bridge.care_voice_accepts = False
+    request = _request(tmp_path, bridge)
+    submitted = _submit(request, wants_escort=False)
+
+    result = asyncio.run(
+        update_response_status(
+            submitted["response_id"],
+            IntakeStatusUpdate(status="acknowledged"),
+            request,
+        )
+    )
+
+    assert result["voice_dispatched"] is False
+    assert request.app.state.intake_db.get(submitted["response_id"]).status == "acknowledged"
+    assert request.app.state.operator_inbox.list() == []
+
+
+def test_declined_submission_clears_inbox_without_any_voice(tmp_path) -> None:
+    bridge = Bridge()
+    request = _request(tmp_path, bridge)
+    submitted = _submit(request, wants_escort=True)
+
+    result = asyncio.run(
+        update_response_status(
+            submitted["response_id"],
+            IntakeStatusUpdate(status="declined"),
+            request,
+        )
+    )
+
+    assert result["robot_dispatched"] is False
+    assert result["voice_dispatched"] is False
+    assert bridge.care_voice_requests == 0
+    assert bridge.intake_escort_dispatches == []
+    assert request.app.state.operator_inbox.list() == []

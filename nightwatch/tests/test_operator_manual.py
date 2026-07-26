@@ -228,6 +228,21 @@ def test_voice_presets_dispatch_canned_lines_through_speak() -> None:
         assert continuation["args"]["text"]
 
 
+def test_every_operator_voice_preset_is_prewarmed() -> None:
+    # Every canned line a console button can speak must be in PRESET_LINES,
+    # or SpeakSkill's prewarm misses it and that button pays full synthesis.
+    from nightwatch import voice_presets
+    from nightwatch.webchat import _OPERATOR_ACTIONS
+
+    canned = {
+        spec["args"]["text"]
+        for spec in _OPERATOR_ACTIONS.values()
+        if spec.get("tool") == "speak"
+    }
+    assert canned
+    assert canned <= set(voice_presets.PRESET_LINES)
+
+
 def test_operator_html_has_voice_panel_with_presets_and_free_text() -> None:
     assert "VOICE 语音" in _OPERATOR_HTML
     for preset in (
@@ -243,6 +258,19 @@ def test_operator_html_has_voice_panel_with_presets_and_free_text() -> None:
     assert 'id="speakText"' in _OPERATOR_HTML
     assert 'maxlength="200"' in _OPERATOR_HTML
     assert "act('speak_text', {text})" in _OPERATOR_HTML
+
+
+def test_operator_html_has_intake_confirmation_dialog_hooks() -> None:
+    # The workbench popup for incoming questionnaire submissions: polls the
+    # operator inbox and resolves via PATCH acknowledged/declined.
+    assert 'id="intakeDialog"' in _OPERATOR_HTML
+    assert 'id="intakeSummary"' in _OPERATOR_HTML
+    assert "confirmIntakePrompt()" in _OPERATOR_HTML
+    assert "dismissIntakePrompt()" in _OPERATOR_HTML
+    assert "/api/form/operator/inbox" in _OPERATOR_HTML
+    assert "resolveIntakePrompt('acknowledged')" in _OPERATOR_HTML
+    assert "resolveIntakePrompt('declined')" in _OPERATOR_HTML
+    assert "window.setInterval(refreshIntakeInbox" in _OPERATOR_HTML
 
 
 def test_operator_html_has_always_visible_modes_and_manual_fail_safe_hooks() -> None:

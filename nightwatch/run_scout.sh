@@ -162,24 +162,9 @@ else
   print "Using premap: $NIGHTWATCH_PREMAP"
 fi
 
-# DimensionalOS documents <10 ms / 0% loss for the Go2 LAN, but some firmware
-# and access-point combinations silently drop ICMP while WebRTC is available.
-# A TCP rejection is also positive proof that the host answered; use it as the
-# fallback so a live robot is not incorrectly rejected during demo startup.
-robot_ip="${DIMOS_ROBOT_IP:-192.168.12.1}"
-if ping_output=$(ping -c 3 -t 3 "$robot_ip" 2>&1); then
-  print "$ping_output" | tail -2
-else
-  tcp_probe=$(nc -zvw2 "$robot_ip" 8080 2>&1) || true
-  if [[ "$tcp_probe" == *"Connection refused"* || "$tcp_probe" == *"succeeded"* ]]; then
-    print -u2 "Go2 does not answer ICMP, but it responded to the TCP reachability probe."
-  else
-    print -u2 "$ping_output"
-    print -u2 "$tcp_probe"
-    print -u2 "The Go2 is unreachable. Join its LAN before starting the stack."
-    exit 1
-  fi
-fi
+# Do not preflight the Go2 signaling ports. Both /con_notify and a bare TCP
+# connection consume the firmware's single accept slot on some Go2 releases.
+# The real WebRTC connector below owns readiness and bounded retry.
 print "Venue profile: $venue"
 print "Venue data: $venue_map_root"
 print "Startup mode: $NIGHTWATCH_OPERATING_MODE"

@@ -191,6 +191,13 @@ async def submit_intake(request: Request, body: IntakeSubmitRequest) -> dict[str
         auto_escort_dispatched = bool(
             bridge.request_auto_escort(record.response_id, record.session_id)
         )
+    if not bound_to_robot and not auto_escort_dispatched:
+        # Nobody (robot conversation or armed auto-escort) is handling this
+        # submission, so it needs a human decision: surface it to the operator
+        # console, which pops a confirmation dialog.
+        request.app.state.operator_inbox.add(
+            {**record.to_dict(), "routing_hint": hint}
+        )
     return {
         **record.to_dict(),
         "routing_hint": hint,
@@ -207,6 +214,12 @@ async def list_latest_responses(
 ) -> dict[str, Any]:
     records = request.app.state.intake_db.list_latest(limit=limit)
     return {"responses": [record.to_dict() for record in records]}
+
+
+@router.get("/operator/inbox")
+async def operator_inbox(request: Request) -> dict[str, Any]:
+    """Submissions awaiting an operator confirmation dialog, oldest first."""
+    return {"items": request.app.state.operator_inbox.list()}
 
 
 @router.get("/responses/pending-escort")
@@ -229,6 +242,7 @@ async def update_response_status(
     if updated is None:
         raise HTTPException(status_code=404, detail="response not found")
     robot_dispatched = False
+    voice_dispatched = False
     bridge = getattr(request.app.state, "robot_bridge", None)
     if (
         body.status == "acknowledged"
@@ -241,8 +255,19 @@ async def update_response_status(
             )
         if not robot_dispatched:
             request.app.state.intake_db.update_status(response_id, "pending")
+            # Left in the operator inbox on purpose: the record is still
+            # pending, so the console keeps prompting until the robot frees up.
             raise HTTPException(
                 status_code=409,
                 detail="robot is offline, held, or already handling another request",
             )
-    return {**updated.to_dict(), "robot_dispatched": robot_dispatched}
+    elif body.status == "acknowledged" and bridge is not None:
+        # No escort wanted: the confirmation's only robot action is one
+        # caring voice line, and an offline robot must not block the ack.
+        voice_dispatched = bool(bridge.request_care_voice())
+    request.app.state.operator_inbox.remove(response_id)
+    return {
+        **updated.to_dict(),
+        "robot_dispatched": robot_dispatched,
+        "voice_dispatched": voice_dispatched,
+    }

@@ -61,3 +61,9 @@ insta360_bridge/build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated TTS wav cache (SpeakSkill pre-synthesized lines)
+nightwatch/assets/tts_cache/
+
+# IDE local settings
+.qoder/

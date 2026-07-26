@@ -12,6 +12,7 @@ from app.services.frame_source import create_frame_source
 from app.services.intake_db import IntakeDatabase
 from app.services.ledger_memory import LedgerMemory
 from app.services.live_scorer import LiveScoreSource
+from app.services.operator_inbox import OperatorInbox
 from app.services.policy_events import LivePolicyEventSource, StubPolicyEventSource
 from app.services.robot_bridge import RobotBridge
 from app.services.scorer import StubScoreSource
@@ -52,9 +53,10 @@ async def lifespan(app: FastAPI):
         # applies only to interventions and is enforced inside RobotBridge.
         app.state.score_source = LiveScoreSource(
             ws_url=settings.fatigue_ws_url,
-            get_frame=lambda: app.state.frame_source.get_pov_frame()
+            get_frame=lambda: app.state.frame_source.get_pov_sample()
             if hasattr(app.state, "frame_source")
             else None,
+            request_annotated_frames=True,
         )
     else:
         app.state.score_source = StubScoreSource()
@@ -62,12 +64,18 @@ async def lifespan(app: FastAPI):
     app.state.frame_source = create_frame_source(
         settings.camera_source,
         score_provider=app.state.score_source.latest,
+        annotated_sample_provider=(
+            app.state.score_source.latest_annotated_sample
+            if isinstance(app.state.score_source, LiveScoreSource)
+            else None
+        ),
         robot_camera_url=settings.robot_camera_url,
         insta360_mjpeg_url=settings.insta360_mjpeg_url,
     )
     app.state.ledger = LedgerMemory()
     app.state.intake_db = IntakeDatabase(settings.intake_db_path)
     app.state.intake_db.init_schema()
+    app.state.operator_inbox = OperatorInbox()
     app.state.zone_store = ZoneStore(settings.zone_state_path)
     app.state.policy_source = (
         StubPolicyEventSource()

@@ -49,6 +49,22 @@ def test_mjpeg_source_decodes_each_upstream_frame_at_most_once(
     assert calls == 1
 
 
+def test_annotated_stream_fans_out_the_model_jpeg_without_reencoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jpeg = b"\xff\xd8one-model-render\xff\xd9"
+    source = _detached_mjpeg_source(jpeg)
+    source._annotated_sample_provider = lambda: (jpeg, 123.5)
+
+    def unexpected_encode(*_args, **_kwargs):
+        raise AssertionError("cached model annotation must not be re-encoded")
+
+    monkeypatch.setattr(cv2, "imencode", unexpected_encode)
+
+    assert source.get_jpeg_sample(annotated=True) == (jpeg, 123.5)
+    assert source.get_jpeg_sample(annotated=True) == (jpeg, 123.5)
+
+
 def test_lidar_relay_disables_websocket_compression(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

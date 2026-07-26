@@ -117,7 +117,9 @@ def test_second_person_cannot_replace_active_interaction() -> None:
     assert controller.begin_scan(forced=False) is False
 
 
-def test_sleep_scan_is_bounded_raises_camera_and_resumes(monkeypatch) -> None:
+def test_sleep_scan_is_bounded_keeps_balanced_stance_and_resumes(
+    monkeypatch,
+) -> None:
     supervisor = object.__new__(CuriositySupervisor)
     supervisor.config = CuriosityConfig(
         sleep_scan_interval_s=10.0,
@@ -150,11 +152,6 @@ def test_sleep_scan_is_bounded_raises_camera_and_resumes(monkeypatch) -> None:
     supervisor._set_activity = lambda *args: calls.append(("activity", *args))
     supervisor._retry_not_before = 0.0
     monkeypatch.setattr("nightwatch.curiosity.ensure_motion_ready", lambda _c: True)
-    pitches: list[float] = []
-    monkeypatch.setattr(
-        "nightwatch.curiosity.set_body_pitch",
-        lambda _c, pitch: pitches.append(float(pitch)) or True,
-    )
     # The scan window is timed from a fresh monotonic read taken AFTER the
     # blocking stand/posture sequence (the tick's stale `now` used to eat most
     # of the 7 s budget). Freeze curiosity's clock at the tick time so the
@@ -170,13 +167,12 @@ def test_sleep_scan_is_bounded_raises_camera_and_resumes(monkeypatch) -> None:
     )
     assert supervisor._scan_kind == "scheduled"
     assert supervisor._face_observation_until == 107.0
-    assert pitches == [supervisor.config.face_observation_pitch_rad]
+    assert supervisor._face_observation_pitch_active is False
     assert supervisor._modes().snapshot().interaction_state is (
         InteractionState.SCHEDULED_SCAN
     )
 
     assert supervisor._maybe_sleep_scan(108.0, NavigationState.IDLE) is False
-    assert pitches[-1] == 0.0
     assert supervisor._scan_kind is None
     assert supervisor._sleep_active_elapsed_s == 0.0
     assert supervisor._modes().snapshot().interaction_state is InteractionState.IDLE
@@ -294,11 +290,6 @@ def test_sleep_scan_clock_accrues_during_patrol_planner_waits(
     monkeypatch.setattr(
         "nightwatch.curiosity.ensure_motion_ready", lambda *_a, **_k: True
     )
-    pitches: list[float] = []
-    monkeypatch.setattr(
-        "nightwatch.curiosity.set_body_pitch",
-        lambda _c, pitch: pitches.append(float(pitch)) or True,
-    )
 
     def tick_one_second() -> None:
         # tick_elapsed is clamped to 1.0 s; backdating the previous tick
@@ -314,7 +305,7 @@ def test_sleep_scan_clock_accrues_during_patrol_planner_waits(
 
     tick_one_second()
     assert curiosity._scan_kind == "scheduled"
-    assert pitches == [curiosity.config.face_observation_pitch_rad]
+    assert curiosity._face_observation_pitch_active is False
     assert curiosity._modes().snapshot().interaction_state is (
         InteractionState.SCHEDULED_SCAN
     )

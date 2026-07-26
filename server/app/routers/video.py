@@ -12,6 +12,11 @@ from starlette.concurrency import run_in_threadpool
 router = APIRouter(tags=["video"])
 
 BOUNDARY = b"--frame\r\n"
+STREAM_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "X-Accel-Buffering": "no",
+}
 
 
 async def _mjpeg_stream(request: Request, annotated: bool) -> AsyncIterator[bytes]:
@@ -26,13 +31,20 @@ async def _mjpeg_stream(request: Request, annotated: bool) -> AsyncIterator[byte
         # Decode/draw/JPEG work must not run on FastAPI's event loop. A single
         # slow encode used to stall status, policy, and every other video
         # client together.
-        jpeg = await asyncio.to_thread(
-            frame_source.get_jpeg_frame,
+        jpeg, capture_ts = await asyncio.to_thread(
+            frame_source.get_jpeg_sample,
             annotated,
         )
+        frame_headers = (
+            f"X-Capture-Timestamp: {capture_ts:.6f}\r\n"
+            f"X-Frame-Age-Ms: {max(0.0, (time.time() - capture_ts) * 1000.0):.1f}\r\n"
+            if capture_ts is not None
+            else ""
+        ).encode()
         yield (
             BOUNDARY
             + b"Content-Type: image/jpeg\r\n"
+            + frame_headers
             + f"Content-Length: {len(jpeg)}\r\n\r\n".encode()
             + jpeg
             + b"\r\n"
@@ -46,6 +58,7 @@ async def video_feed_pov(request: Request) -> StreamingResponse:
     return StreamingResponse(
         _mjpeg_stream(request, annotated=False),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers=STREAM_HEADERS,
     )
 
 
@@ -54,6 +67,7 @@ async def video_feed_annotated(request: Request) -> StreamingResponse:
     return StreamingResponse(
         _mjpeg_stream(request, annotated=True),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers=STREAM_HEADERS,
     )
 
 
@@ -68,6 +82,7 @@ async def video_feed_robot(request: Request) -> StreamingResponse:
         return StreamingResponse(
             _mjpeg_stream(request, annotated=False),
             media_type="multipart/x-mixed-replace; boundary=frame",
+            headers=STREAM_HEADERS,
         )
 
     url = request.app.state.settings.robot_camera_url
@@ -91,4 +106,6 @@ async def video_feed_robot(request: Request) -> StreamingResponse:
         finally:
             upstream.close()
 
-    return StreamingResponse(stream(), media_type=media_type)
+    return StreamingResponse(
+        stream(), media_type=media_type, headers=STREAM_HEADERS
+    )

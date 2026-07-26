@@ -16,6 +16,8 @@ from app.services.scorer import ScoreSource
 
 logger = logging.getLogger("nightwatch.live_scorer")
 
+FrameSample = np.ndarray | tuple[np.ndarray, float | None]
+
 
 def _idle_frame(ts: float, *, source_status: str = "connecting") -> FatigueFrame:
     """Returned before the first real result, or when no face is detected."""
@@ -193,7 +195,7 @@ class LiveScoreSource(ScoreSource):
     def __init__(
         self,
         ws_url: str,
-        get_frame: Callable[[], np.ndarray | None],
+        get_frame: Callable[[], FrameSample | None],
         *,
         should_analyze: Callable[[], bool] | None = None,
         reconnect_delay: float = 2.0,
@@ -201,6 +203,7 @@ class LiveScoreSource(ScoreSource):
         connect_timeout: float = 5.0,
         response_timeout: float = 10.0,
         jpeg_quality: int = 80,
+        request_annotated_frames: bool = False,
     ) -> None:
         self._ws_url = ws_url
         self._get_frame = get_frame
@@ -211,7 +214,12 @@ class LiveScoreSource(ScoreSource):
         self._response_timeout = response_timeout
         self._backoff = reconnect_delay
         self._jpeg_quality = jpeg_quality
+        self._request_annotated_frames = request_annotated_frames
         self._frame = _idle_frame(time.time())
+        # Exact model-rendered frame paired with the result that produced it.
+        # Assignment of this immutable tuple is atomic under CPython, so the
+        # synchronous MJPEG worker can read it without holding up inference.
+        self._annotated_sample: tuple[bytes, float, int] | None = None
         self._task: asyncio.Task | None = None
         self._stopping = False
 
@@ -221,6 +229,13 @@ class LiveScoreSource(ScoreSource):
 
     def latest(self) -> FatigueFrame:
         return self._frame
+
+    def latest_annotated_sample(self) -> tuple[bytes, float] | None:
+        sample = self._annotated_sample
+        if sample is None:
+            return None
+        jpeg, capture_ts, _sequence = sample
+        return jpeg, capture_ts
 
     async def start(self) -> None:
         self._stopping = False
@@ -250,6 +265,7 @@ class LiveScoreSource(ScoreSource):
                 self._frame = _idle_frame(
                     time.time(), source_status="model_offline"
                 )
+                self._annotated_sample = None
                 delay = self._backoff
                 self._backoff = min(self._backoff * 2, self._max_reconnect_delay)
                 await asyncio.sleep(delay)
@@ -258,8 +274,12 @@ class LiveScoreSource(ScoreSource):
         # Every await on the socket is bounded. Without timeouts, a stalled
         # model service left ws.recv() pending forever and the published frame
         # kept a stale ts and source_status until restart.
+        ws_url = self._ws_url
+        if self._request_annotated_frames:
+            separator = "&" if "?" in ws_url else "?"
+            ws_url = f"{ws_url}{separator}annotated=true"
         async with websockets.connect(
-            self._ws_url,
+            ws_url,
             max_size=16 * 1024 * 1024,
             open_timeout=self._connect_timeout,
         ) as ws:
@@ -294,12 +314,27 @@ class LiveScoreSource(ScoreSource):
                     self._frame = _idle_frame(
                         time.time(), source_status="standby"
                     )
+                    self._annotated_sample = None
                     await asyncio.sleep(0.1)
                     continue
-                frame = self._get_frame()
-                if frame is None:
+                sample = self._get_frame()
+                if sample is None:
                     await asyncio.sleep(0.05)
                     continue
+                if (
+                    isinstance(sample, tuple)
+                    and len(sample) == 2
+                    and isinstance(sample[0], np.ndarray)
+                ):
+                    frame = sample[0]
+                    capture_ts = (
+                        float(sample[1])
+                        if isinstance(sample[1], (int, float))
+                        else time.time()
+                    )
+                else:
+                    frame = sample
+                    capture_ts = time.time()
 
                 ok, buffer = cv2.imencode(
                     ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self._jpeg_quality]
@@ -314,12 +349,31 @@ class LiveScoreSource(ScoreSource):
                     ws.recv(), timeout=self._response_timeout
                 )
                 if isinstance(message, bytes):
-                    # Only happens if annotated=true was requested; we don't.
+                    # Annotated mode is JSON-result-then-JPEG. A binary frame
+                    # here is out of sequence, so ignore it and resynchronize
+                    # on the next request instead of parsing bytes as JSON.
                     continue
 
                 payload = json.loads(message)
                 message_type = payload.get("type")
                 if message_type == "result":
                     self._frame = _map_result(payload)
+                    if (
+                        self._request_annotated_frames
+                        and payload.get("annotated_frame_follows")
+                    ):
+                        annotated = await asyncio.wait_for(
+                            ws.recv(), timeout=self._response_timeout
+                        )
+                        if not isinstance(annotated, bytes):
+                            raise RuntimeError(
+                                "fatigue service returned a non-binary "
+                                "annotated frame"
+                            )
+                        self._annotated_sample = (
+                            annotated,
+                            capture_ts,
+                            int(payload.get("sequence", -1)),
+                        )
                 elif message_type == "error":
                     logger.warning("fatigue service error: %s", payload.get("message"))

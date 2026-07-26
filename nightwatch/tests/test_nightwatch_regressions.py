@@ -5,6 +5,7 @@ from collections import Counter, deque
 import json
 import math
 import os
+from pathlib import Path
 from queue import Queue
 import sqlite3
 import struct
@@ -14,6 +15,20 @@ from threading import Condition, Event, Lock, RLock, Thread
 import time
 from types import SimpleNamespace
 
+from dimos.core.transport import JpegLcmTransport
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.base import NavigationState
+from dimos.navigation.replanning_a_star.module import _repeated_obstacle_cluster
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from fastapi.testclient import TestClient
 from nightwatch import (
     connection as nightwatch_connection,
@@ -71,6 +86,7 @@ from nightwatch.navigation import (
 )
 from nightwatch.planar_relocalize import relocalize_planar
 from nightwatch.speak import SpeakSkill, _chain_for_mode
+from nightwatch import voice_presets
 from nightwatch.tracker import (
     YoloFollowTracker,
     _appearance_descriptor,
@@ -93,7 +109,22 @@ from nightwatch.world_model import (
 )
 import numpy as np
 import pytest
+from reactivex.subject import Subject
 from unitree_webrtc_connect.constants import SPORT_CMD
+
+
+def test_launcher_never_preflights_unitree_signaling_slot() -> None:
+    launcher = (Path(__file__).parents[1] / "run_scout.sh").read_text()
+    executable = "\n".join(
+        line for line in launcher.splitlines() if not line.lstrip().startswith("#")
+    )
+
+    # On the venue Go2, even an abandoned TCP connection occupies the
+    # firmware's single signaling accept slot. Only the real WebRTC SDP
+    # transaction may touch either signaling port.
+    assert "/con_notify" not in executable
+    assert "192.168.12.1 9991" not in executable
+    assert "192.168.12.1 8081" not in executable
 
 
 def test_operator_zone_map_projection_and_route_guard(tmp_path) -> None:
@@ -197,22 +228,6 @@ def test_camera_replay_cannot_replace_the_current_live_frame() -> None:
     assert _camera_frame_is_current(999.9, 999.8, now=now)
     assert not _camera_frame_is_current(999.7, 999.8, now=now)
     assert not _camera_frame_is_current(600.0, 999.8, now=now)
-
-from dimos.core.transport import JpegLcmTransport
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.base import NavigationState
-from dimos.navigation.replanning_a_star.module import _repeated_obstacle_cluster
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-
 
 def test_frontier_and_patrol_legs_allow_full_floor_travel() -> None:
     assert FRONTIER_GOAL_TIMEOUT_S >= 60.0
@@ -352,17 +367,12 @@ def test_motion_rearm_uses_full_dimos_stand_ready_sequence(monkeypatch) -> None:
 
     assert nightwatch_unitree.ensure_motion_ready(connection, force=True) is True
     assert [request["api_id"] for request in requests] == [
+        # MCF's documented Pose exit; firmware state can outlive the process.
+        SPORT_CMD["StopMove"],
         SPORT_CMD["StandUp"],
         SPORT_CMD["RecoveryStand"],
-        # Pose(off) before BalanceStand: a latched pose mode (dropped sleep
-        # scan restore) makes the Go2 ignore all gait/velocity commands, so
-        # every re-arm must clear it (live freeze, 2026-07-25).
-        SPORT_CMD["Pose"],
         SPORT_CMD["BalanceStand"],
-        SPORT_CMD["SwitchJoystick"],
     ]
-    assert requests[2]["parameter"] == {"data": False}
-    assert requests[-1]["parameter"] == {"data": True}
 
 
 def test_motion_rearm_does_not_claim_success_after_rejected_step(monkeypatch) -> None:
@@ -384,10 +394,45 @@ def test_motion_rearm_does_not_claim_success_after_rejected_step(monkeypatch) ->
         is False
     )
     assert [request["api_id"] for request in requests] == [
+        SPORT_CMD["StopMove"],
         SPORT_CMD["StandUp"],
         SPORT_CMD["RecoveryStand"],
     ]
     assert nightwatch_unitree._last_ready[0] == 0.0
+
+
+def test_motion_rearm_continues_when_lying_robot_rejects_stopmove(
+    monkeypatch,
+) -> None:
+    """A down Go2 has nothing to stop, but must still receive StandReady."""
+    requests: list[dict] = []
+
+    def publish(_topic, request):
+        requests.append(request.copy())
+        if request["api_id"] == SPORT_CMD["StopMove"]:
+            return {
+                "type": "res",
+                "data": {"header": {"status": {"code": -1}}, "data": ""},
+            }
+        return {"status": "ok"}
+
+    monkeypatch.setattr(nightwatch_unitree.time, "sleep", lambda _seconds: None)
+    nightwatch_unitree._last_ready[0] = 0.0
+    nightwatch_unitree._pose_mode_on[0] = True
+
+    assert (
+        nightwatch_unitree.ensure_motion_ready(
+            SimpleNamespace(publish_request=publish), force=True
+        )
+        is True
+    )
+    assert [request["api_id"] for request in requests] == [
+        SPORT_CMD["StopMove"],
+        SPORT_CMD["StandUp"],
+        SPORT_CMD["RecoveryStand"],
+        SPORT_CMD["BalanceStand"],
+    ]
+    assert nightwatch_unitree.pose_mode_latched() is False
 
 
 def test_motion_rearm_is_not_repeated_for_ordinary_planner_restarts(
@@ -409,7 +454,7 @@ def test_motion_rearm_is_not_repeated_for_ordinary_planner_restarts(
     clock[0] += 30.0
     assert nightwatch_unitree.ensure_motion_ready(connection) is True
 
-    assert first_request_count == 5
+    assert first_request_count == 4
     assert len(requests) == first_request_count
 
 
@@ -602,8 +647,10 @@ def test_go2_shutdown_is_idempotent(monkeypatch) -> None:
     connection._camera_info_thread = None
     connection._sensor_subscriptions = None
     connection._connection_lock = RLock()
-    connection.liedown = lambda: events.append("liedown")
-    connection.connection = SimpleNamespace(stop=lambda: events.append("webrtc"))
+    connection.connection = SimpleNamespace(
+        stop_movement=lambda: events.append("stop-movement"),
+        stop=lambda: events.append("webrtc"),
+    )
     monkeypatch.setattr(
         "dimos.core.module.Module.stop", lambda _self: events.append("module")
     )
@@ -611,7 +658,7 @@ def test_go2_shutdown_is_idempotent(monkeypatch) -> None:
     connection.stop()
     connection.stop()
 
-    assert events == ["liedown", "webrtc", "module"]
+    assert events == ["stop-movement", "webrtc", "module"]
 
 
 def test_video_stale_watchdog_reasserts_on_without_replacing_peer(monkeypatch) -> None:
@@ -746,14 +793,16 @@ def test_full_webrtc_recovery_restores_all_sensor_subscriptions(
     replacement = object.__new__(UnitreeWebRTCConnection)
     replacement.start = lambda: events.append("new-start")
     replacement.stop = lambda: events.append("new-stop")
-    replacement.set_motion_mode = lambda mode: events.append(("motion-mode", mode))
     disposed = SimpleNamespace(dispose=lambda: events.append("dispose-streams"))
+    build_kwargs: dict[str, object] = {}
+
+    def fake_make_connection(*_args, **kwargs):
+        build_kwargs.update(kwargs)
+        return replacement
 
     monkeypatch.setattr(nightwatch_connection, "WEBRTC_SLOT_FREE_S", 0.0)
     monkeypatch.setattr(
-        nightwatch_connection,
-        "make_connection",
-        lambda *_args, **_kwargs: replacement,
+        nightwatch_connection, "make_connection", fake_make_connection
     )
     connection = object.__new__(GO2Connection)
     connection.connection = old
@@ -761,8 +810,8 @@ def test_full_webrtc_recovery_restores_all_sensor_subscriptions(
         ip="192.168.12.1",
         g=SimpleNamespace(),
         aes_128_key=None,
-        velocity_api=False,
-        motion_mode="normal",
+        velocity_api=True,
+        motion_mode=None,
         lidar=True,
     )
     connection._connection_lock = RLock()
@@ -773,9 +822,18 @@ def test_full_webrtc_recovery_restores_all_sensor_subscriptions(
     connection._reconnect_count = 0
     connection._last_reconnect_reason = "peer_closed"
     connection._bind_sensor_streams = lambda: events.append("bind-all-streams")
+    connection._ensure_locomotion_controller = (
+        lambda: events.append("ensure-locomotion")
+    )
     connection._configure_live_connection = lambda: events.append("configure")
     connection._set_lidar_stream = (
         lambda enabled: events.append(("lidar", enabled))
+    )
+    monkeypatch.setattr(
+        nightwatch_connection,
+        "ensure_motion_ready",
+        lambda _connection, force=False: events.append(("motion-ready", force))
+        or True,
     )
 
     connection._reconnect()
@@ -783,16 +841,74 @@ def test_full_webrtc_recovery_restores_all_sensor_subscriptions(
     assert connection.connection is replacement
     assert connection._reconnect_count == 1
     assert connection._reconnecting is False
+    # A rebuilt peer preserves firmware MCF and restores the same direct sport
+    # velocity path before accepting new motion.
+    assert build_kwargs["mode"] is None
+    assert build_kwargs["velocity_api"] is True
     assert events == [
         "old-stop-motion",
         "dispose-streams",
         "old-stop",
         "new-start",
         "bind-all-streams",
-        ("motion-mode", "normal"),
+        "ensure-locomotion",
+        ("motion-ready", True),
         "configure",
         ("lidar", True),
     ]
+
+
+class _FakeMotionSwitcher:
+    """Firmware motion-switcher that records accidental mode mutations."""
+
+    def __init__(self, active: str = "mcf") -> None:
+        self.active = active
+        self.select_calls = 0
+
+    def __call__(self, topic: str, data: dict) -> dict:
+        api_id = data.get("api_id")
+        if api_id == 1001:
+            return {"data": {"data": json.dumps({"name": self.active})}}
+        if api_id == 1002:
+            self.select_calls += 1
+        return {"code": 0}
+
+
+def _locomotion_connection(
+    firmware: _FakeMotionSwitcher,
+) -> GO2Connection:
+    connection = object.__new__(GO2Connection)
+    connection.config = SimpleNamespace(motion_mode=None, velocity_api=True)
+    webrtc = object.__new__(UnitreeWebRTCConnection)
+    webrtc.publish_request = firmware
+    connection.connection = webrtc
+    connection._locomotion_controller = None
+    return connection
+
+
+def test_locomotion_probe_preserves_firmware_mcf_controller() -> None:
+    firmware = _FakeMotionSwitcher(active="mcf")
+    connection = _locomotion_connection(firmware)
+
+    assert connection._ensure_locomotion_controller() is True
+    assert firmware.select_calls == 0
+    assert connection._locomotion_controller == "mcf"
+
+
+def test_nested_firmware_error_is_not_mistaken_for_success() -> None:
+    # Exact envelope from the live SelectMode("normal") response.
+    assert (
+        nightwatch_unitree._request_succeeded(
+            {"data": {"header": {"status": {"code": 7004}}, "data": ""}}
+        )
+        is False
+    )
+    assert (
+        nightwatch_unitree._request_succeeded(
+            {"data": {"header": {"status": {"code": 0}}, "data": ""}}
+        )
+        is True
+    )
 
 
 def test_hung_replacement_build_never_wedges_recovery(monkeypatch) -> None:
@@ -830,8 +946,8 @@ def test_hung_replacement_build_never_wedges_recovery(monkeypatch) -> None:
         ip="192.168.12.1",
         g=SimpleNamespace(),
         aes_128_key=None,
-        velocity_api=False,
-        motion_mode="normal",
+        velocity_api=True,
+        motion_mode=None,
         lidar=True,
     )
     connection._connection_lock = RLock()
@@ -1335,6 +1451,44 @@ def test_web_camera_retains_capture_timestamp_through_jpeg_encoding() -> None:
     assert encoded_ts == capture_ts
 
 
+def test_web_camera_clients_do_not_cancel_each_other() -> None:
+    interface = object.__new__(LatestFrameRobotWebInterface)
+    frames: Subject[tuple[bytes, float]] = Subject()
+    interface.active_streams = {"camera": frames}
+    interface.disposables = SimpleNamespace(add=lambda _disposable: None)
+
+    first = interface.stream_generator("camera")()
+    second = interface.stream_generator("camera")()
+    first_result: Queue[bytes] = Queue()
+    second_result: Queue[bytes] = Queue()
+    first_reader = Thread(target=lambda: first_result.put(next(first)))
+    second_reader = Thread(target=lambda: second_result.put(next(second)))
+    first_reader.start()
+    second_reader.start()
+
+    deadline = time.monotonic() + 1.0
+    while len(frames.observers) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(frames.observers) == 2
+
+    frames.on_next((b"jpeg-one", time.time()))
+    first_reader.join(timeout=1.0)
+    second_reader.join(timeout=1.0)
+    assert b"jpeg-one" in first_result.get_nowait()
+    assert b"jpeg-one" in second_result.get_nowait()
+
+    first.close()
+    assert len(frames.observers) == 1
+
+    next_result: Queue[bytes] = Queue()
+    next_reader = Thread(target=lambda: next_result.put(next(second)))
+    next_reader.start()
+    frames.on_next((b"jpeg-two", time.time()))
+    next_reader.join(timeout=1.0)
+    assert b"jpeg-two" in next_result.get_nowait()
+    second.close()
+
+
 def test_operator_status_reports_robot_and_camera_state() -> None:
     operator = object.__new__(NightwatchWebInput)
     operator._curiosity = SimpleNamespace(
@@ -1414,6 +1568,7 @@ def test_timed_out_status_refresh_allows_a_new_generation() -> None:
     interface._status_refresh_started_at = time.monotonic() - 10.0
     interface._status_refresh_generation = 1
     interface._status_abandoned_generations = set()
+    interface._latest_stream_capture_ts = time.time() - 0.05
 
     status, ready = interface._cached_operator_status()
     deadline = time.monotonic() + 1.0
@@ -1422,6 +1577,7 @@ def test_timed_out_status_refresh_allows_a_new_generation() -> None:
 
     assert ready is True
     assert status["status_stale"] is True
+    assert 0.0 <= status["camera_age_ms"] < 500.0
     assert interface._status_refresh_generation == 2
     assert interface._status_cache["behavior"] == "patrol"
     assert interface._status_refreshing is False
@@ -3181,24 +3337,18 @@ def test_face_observation_frames_person_only_during_patrol_idle(monkeypatch) -> 
     curiosity._speak_line = spoken.append
     activities: list[tuple] = []
     curiosity._set_activity = lambda *args: activities.append(args)
-    pitches: list[float] = []
     monkeypatch.setattr("nightwatch.curiosity.ensure_motion_ready", lambda _c: True)
-    monkeypatch.setattr(
-        "nightwatch.curiosity.set_body_pitch",
-        lambda _c, pitch: pitches.append(float(pitch)) or True,
-    )
 
     now = 100.0
     assert curiosity._maybe_face_observation(now, NavigationState.IDLE) is True
     assert curiosity._face_observation_key == "person:visitor-a"
     assert curiosity._face_observation_until >= now + 14.0
-    assert pitches == [curiosity.config.face_observation_pitch_rad]
+    assert curiosity._face_observation_pitch_active is False
     assert spoken == [curiosity.config.face_observation_prompt]
     assert activities[-1][1] == "face_observation"
 
     # An active path is never interrupted to acquire another face.
     curiosity._stop_face_observation("test complete")
-    assert pitches[-1] == 0.0
     assert (
         curiosity._maybe_face_observation(now + 1.0, NavigationState.FOLLOWING_PATH)
         is False
@@ -4597,71 +4747,39 @@ def test_wave_hello_is_real_only_when_firmware_acknowledges(monkeypatch) -> None
     )
 
 
-def test_set_body_pitch_enables_pose_mode_then_eulers_and_restores() -> None:
-    # The firmware ACKs Euler in normal locomotion mode without applying it
-    # (observed live 2026-07-25: scans logged camera_raised=true, body never
-    # moved). Attitude changes require pose mode: Pose(on) then Euler; restore
-    # is Euler(0), Pose(off), BalanceStand.
+def test_body_pitch_is_refused_without_sending_a_posture_command() -> None:
+    # Lowering/tilting the hips caused the live locomotion lock. Nightwatch no
+    # longer emits Pose or Euler commands for sleep scans.
     requests: list[dict] = []
     connection = SimpleNamespace(
         publish_request=lambda _topic, request: requests.append(request.copy())
         or {"status": "ok"}
     )
-    assert nightwatch_unitree.set_body_pitch(connection, 0.35) is True
-    assert [request["api_id"] for request in requests] == [
-        SPORT_CMD["Pose"],
-        SPORT_CMD["Euler"],
-    ]
-    assert requests[0]["parameter"] == {"data": True}
-    assert requests[1]["parameter"] == {"x": 0.0, "y": 0.35, "z": 0.0}
+    assert nightwatch_unitree.set_body_pitch(connection, 0.35) is False
+    assert requests == []
 
-    # Over-range up-tilt is clamped to the safe maximum.
-    requests.clear()
-    nightwatch_unitree.set_body_pitch(connection, 2.0)
-    assert requests[-1]["parameter"]["y"] == pytest.approx(0.4)
-
-    # Restore: neutral Euler, leave pose mode, re-latch BalanceStand.
-    requests.clear()
+    # A legacy zero/restore call uses normal MCF recovery controls only.
     assert nightwatch_unitree.set_body_pitch(connection, 0.0) is True
     assert [request["api_id"] for request in requests] == [
-        SPORT_CMD["Euler"],
-        SPORT_CMD["Pose"],
+        SPORT_CMD["StopMove"],
         SPORT_CMD["BalanceStand"],
     ]
-    assert requests[0]["parameter"] == {"x": 0.0, "y": 0.0, "z": 0.0}
-    assert requests[1]["parameter"] == {"data": False}
-
-    # A rejected ack is reported as failure (no silent success).
-    rejected = SimpleNamespace(
-        publish_request=lambda _topic, _request: {"status": "error", "code": 3}
-    )
-    assert nightwatch_unitree.set_body_pitch(rejected, 0.35) is False
 
 
-def test_set_body_pitch_rolls_back_pose_mode_when_tilt_fails() -> None:
-    # In pose mode the Go2 ignores every gait/velocity command. If Pose(on)
-    # succeeds but the Euler tilt is rejected, pose mode MUST be rolled back,
-    # or the dog only moves joints until a power cycle (live freeze twice on
-    # 2026-07-25).
+def test_body_pitch_cleanup_reports_rejected_stopmove() -> None:
     requests: list[dict] = []
 
     def publish(_topic, request):
         requests.append(request.copy())
-        if request["api_id"] == SPORT_CMD["Euler"] and request["parameter"]["y"] != 0.0:
+        if request["api_id"] == SPORT_CMD["StopMove"]:
             return {"status": "error", "code": 3}
         return {"status": "ok"}
 
     connection = SimpleNamespace(publish_request=publish)
-    assert nightwatch_unitree.set_body_pitch(connection, 0.35) is False
+    assert nightwatch_unitree.set_body_pitch(connection, 0.0) is False
     assert [request["api_id"] for request in requests] == [
-        SPORT_CMD["Pose"],  # on
-        SPORT_CMD["Euler"],  # tilt (rejected)
-        SPORT_CMD["Euler"],  # neutral
-        SPORT_CMD["Pose"],  # off
-        SPORT_CMD["BalanceStand"],
+        SPORT_CMD["StopMove"],
     ]
-    assert requests[0]["parameter"] == {"data": True}
-    assert requests[3]["parameter"] == {"data": False}
 
 
 def test_frontal_face_looking_requires_nose_between_confident_eyes() -> None:
@@ -5873,12 +5991,14 @@ class _FakeTtsBackend:
         return self._produced
 
 
-def _speak_skill_for_chain(backends, monkeypatch, mode):
+def _speak_skill_for_chain(backends, monkeypatch, mode, cache_dir=None):
     monkeypatch.setenv("NIGHTWATCH_TTS", mode)
     skill_obj = object.__new__(SpeakSkill)
     skill_obj._backends = {b.name: b for b in backends}
     skill_obj._tmpdir = "/tmp"
     skill_obj._utt_counter = 0
+    skill_obj._cache_dir = str(cache_dir) if cache_dir is not None else None
+    skill_obj._kokoro_voice = "zf_test"
     played: list[str] = []
     skill_obj._play = lambda path: played.append(path)
     return skill_obj, played
@@ -5973,6 +6093,105 @@ def test_speak_all_backends_failing_returns_none_quietly(monkeypatch) -> None:
 
     # Every backend down: no exception escapes, result is just None.
     assert skill_obj._speak_now("hi") is None
+
+
+class _FileWritingKokoro(_FakeTtsBackend):
+    """Kokoro double that actually writes a wav file, like the real backend."""
+
+    def __init__(self):
+        super().__init__("kokoro")
+
+    def synth(self, text, out_path):
+        self.calls.append(text)
+        with open(out_path, "wb") as f:
+            f.write(b"RIFFfake-wav-bytes")
+        return out_path
+
+
+def test_speak_cache_hit_skips_synthesis_entirely(monkeypatch, tmp_path) -> None:
+    kokoro = _FakeTtsBackend("kokoro")
+    say = _FakeTtsBackend("say", produced=None)
+    skill_obj, played = _speak_skill_for_chain(
+        [kokoro, say], monkeypatch, "auto", cache_dir=tmp_path
+    )
+    cached = skill_obj._cache_path("你好")
+    with open(cached, "wb") as f:
+        f.write(b"RIFFcached")
+
+    assert skill_obj._speak_now("你好") == "cache"
+    # The cached wav plays directly; no backend is ever asked to synthesize.
+    assert played == [cached]
+    assert kokoro.calls == []
+    assert say.calls == []
+
+
+def test_speak_kokoro_output_lands_in_cache_and_replays(
+    monkeypatch, tmp_path
+) -> None:
+    kokoro = _FileWritingKokoro()
+    say = _FakeTtsBackend("say", produced=None)
+    skill_obj, played = _speak_skill_for_chain(
+        [kokoro, say], monkeypatch, "auto", cache_dir=tmp_path
+    )
+    skill_obj._tmpdir = str(tmp_path / "tmp")
+    os.makedirs(skill_obj._tmpdir)
+
+    # First utterance synthesizes, and the wav is moved into the cache.
+    assert skill_obj._speak_now("你好") == "kokoro"
+    cached = skill_obj._cache_path("你好")
+    assert os.path.isfile(cached)
+    assert played == [cached]
+
+    # The repeat is a cache hit: no second synthesis.
+    assert skill_obj._speak_now("你好") == "cache"
+    assert kokoro.calls == ["你好"]
+
+
+def test_speak_say_mode_ignores_kokoro_cache(monkeypatch, tmp_path) -> None:
+    say = _FakeTtsBackend("say", produced=None)
+    skill_obj, played = _speak_skill_for_chain(
+        [say], monkeypatch, "say", cache_dir=tmp_path
+    )
+    with open(skill_obj._cache_path("你好"), "wb") as f:
+        f.write(b"RIFFcached")
+
+    # Explicit `say` mode means `say`, even when a cached wav exists.
+    assert skill_obj._speak_now("你好") == "say"
+    assert say.calls == ["你好"]
+    assert played == []
+
+
+def test_speak_overlong_text_is_not_cached(monkeypatch, tmp_path) -> None:
+    kokoro = _FileWritingKokoro()
+    skill_obj, _played = _speak_skill_for_chain(
+        [kokoro], monkeypatch, "kokoro", cache_dir=tmp_path
+    )
+    skill_obj._tmpdir = str(tmp_path / "tmp")
+    os.makedirs(skill_obj._tmpdir)
+
+    long_text = "长" * 201
+    assert skill_obj._speak_now(long_text) == "kokoro"
+    # Nothing landed in the cache dir (the synth tmp file stays in tmpdir).
+    assert os.listdir(tmp_path) == ["tmp"]
+
+
+def test_prewarm_presets_synthesizes_each_line_once(monkeypatch, tmp_path) -> None:
+    kokoro = _FileWritingKokoro()
+    skill_obj, _played = _speak_skill_for_chain(
+        [kokoro], monkeypatch, "auto", cache_dir=tmp_path
+    )
+    skill_obj._tmpdir = str(tmp_path / "tmp")
+    os.makedirs(skill_obj._tmpdir)
+    skill_obj._stopping = False
+
+    skill_obj._prewarm_presets()
+    assert sorted(kokoro.calls) == sorted(voice_presets.PRESET_LINES)
+    for line in voice_presets.PRESET_LINES:
+        assert skill_obj._cached_wav(line) is not None
+
+    # A second prewarm (e.g. next process start) finds everything cached.
+    skill_obj._prewarm_presets()
+    assert len(kokoro.calls) == len(voice_presets.PRESET_LINES)
 
 
 def test_speak_queue_drops_oldest_beyond_two_pending() -> None:
@@ -7199,7 +7418,8 @@ def test_pose_mode_latch_is_tracked_and_retried_until_acknowledged() -> None:
         or {"status": "ok"}
     )
 
-    assert nightwatch_unitree.set_body_pitch(ok_connection, 0.35) is True
+    # Simulate firmware state left by the older hip-lowering implementation.
+    nightwatch_unitree._pose_mode_on[0] = True
     assert nightwatch_unitree.pose_mode_latched() is True
 
     # A rejected exit leaves the latch set (so it will be retried).
@@ -7214,8 +7434,7 @@ def test_pose_mode_latch_is_tracked_and_retried_until_acknowledged() -> None:
     assert nightwatch_unitree.clear_pose_mode(ok_connection) is True
     assert nightwatch_unitree.pose_mode_latched() is False
     assert [request["api_id"] for request in requests] == [
-        SPORT_CMD["Euler"],
-        SPORT_CMD["Pose"],
+        SPORT_CMD["StopMove"],
         SPORT_CMD["BalanceStand"],
     ]
     requests.clear()
@@ -7237,7 +7456,9 @@ def test_motion_rearm_fast_path_still_breaks_a_pose_latch(monkeypatch) -> None:
 
     assert nightwatch_unitree.ensure_motion_ready(connection) is True
 
-    assert SPORT_CMD["Pose"] in [request["api_id"] for request in requests]
+    assert SPORT_CMD["StopMove"] in [
+        request["api_id"] for request in requests
+    ]
     assert nightwatch_unitree.pose_mode_latched() is False
 
 
@@ -7263,12 +7484,66 @@ def test_supervisor_clears_pose_mode_that_outlived_its_scan() -> None:
         curiosity._enforce_pose_mode_invariant(100.2)
         assert cleared == [True]
 
-        # While a scan legitimately owns pose mode, the watchdog stays quiet.
+        # A scan never owns pose mode now; even during a scan, a legacy latch
+        # is recovered immediately.
         cleared.clear()
         curiosity._scan_kind = "scheduled"
         curiosity._pose_clear_not_before = 0.0
         curiosity._enforce_pose_mode_invariant(200.0)
-        assert cleared == []
+        assert cleared == [True]
     finally:
         curiosity_module.clear_pose_mode = original
         nightwatch_unitree._pose_mode_on[0] = False
+
+
+def test_gesture_cleanup_runs_even_under_manual_override() -> None:
+    # A sport gesture hands the body to the firmware; only the force re-arm
+    # after it restores a locomotion-ready stance. That cleanup used to live
+    # only in the autonomy path, so waving and then taking Manual Override
+    # left the dog in the gesture stance ignoring WASD entirely.
+    from nightwatch.contracts import OperatingMode
+
+    rearms: list[bool] = []
+    curiosity = object.__new__(CuriositySupervisor)
+    curiosity._connection = SimpleNamespace()
+    curiosity._dog_expression_name = "Hello"
+    curiosity._dog_expression_deadline = 500.0  # still "running"
+    curiosity._retry_not_before = 0.0
+    curiosity._motion_watch_started_at = 0.0
+    curiosity._last_motion_ts = None
+
+    import nightwatch.curiosity as curiosity_module
+
+    original = curiosity_module.ensure_motion_ready
+    curiosity_module.ensure_motion_ready = (
+        lambda _c, force=False: rearms.append(force) or True
+    )
+    try:
+        # Manual override mid-gesture: aborted immediately and stance re-armed.
+        curiosity._enforce_expression_watchdog(
+            100.0, SimpleNamespace(mode=OperatingMode.MANUAL)
+        )
+        assert curiosity._dog_expression_name is None
+        assert rearms == [True]
+
+        # An expired gesture is also cleaned up outside autonomy.
+        rearms.clear()
+        curiosity._dog_expression_name = "WiggleHips"
+        curiosity._dog_expression_deadline = 50.0
+        curiosity._enforce_expression_watchdog(
+            100.0, SimpleNamespace(mode=OperatingMode.AUTONOMOUS)
+        )
+        assert curiosity._dog_expression_name is None
+        assert rearms == [True]
+
+        # A gesture still within its window under autonomy is left alone.
+        rearms.clear()
+        curiosity._dog_expression_name = "Hello"
+        curiosity._dog_expression_deadline = 500.0
+        curiosity._enforce_expression_watchdog(
+            100.0, SimpleNamespace(mode=OperatingMode.AUTONOMOUS)
+        )
+        assert curiosity._dog_expression_name == "Hello"
+        assert rearms == []
+    finally:
+        curiosity_module.ensure_motion_ready = original

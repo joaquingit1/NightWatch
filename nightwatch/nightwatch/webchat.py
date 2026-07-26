@@ -53,6 +53,8 @@ from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
+from nightwatch import voice_presets
+
 WEB_CAMERA_HZ = 10.0
 WEB_CAMERA_WIDTH = 960
 WEB_CAMERA_HEIGHT = 540
@@ -196,50 +198,28 @@ _OPERATOR_ACTIONS: dict[str, dict[str, Any]] = {
     "stop_follow": {"tool": "stop_following", "args": {}},
     # Voice presets: each plays one canned line through the speak skill.
     # Speech is queued robot-side (non-blocking, max 2 pending) so these can
-    # never stall or interrupt other console actions.
-    "speak_invite": {
-        "tool": "speak",
-        "args": {
-            "text": (
-                "你看起来有点累，需要我带你去休息区吗？ "
-                "You look tired. Would you like me to guide you to the rest area?"
-            )
-        },
-    },
+    # never stall or interrupt other console actions. The texts live in
+    # voice_presets so SpeakSkill pre-synthesizes exactly these lines.
+    "speak_invite": {"tool": "speak", "args": {"text": voice_presets.SPEAK_INVITE}},
     "speak_prescribe": {
         "tool": "speak",
-        "args": {
-            "text": (
-                "建议你去休息区睡一觉。愿意的话，扫一下我身上的二维码。 "
-                "A short nap would help. Scan the QR code on my back if you'd like."
-            )
-        },
+        "args": {"text": voice_presets.SPEAK_PRESCRIBE},
     },
     "speak_escort_start": {
         "tool": "speak",
-        "args": {
-            "text": (
-                "跟我来，我带你去休息区。 "
-                "Follow me, I'll take you to the rest area."
-            )
-        },
+        "args": {"text": voice_presets.SPEAK_ESCORT_START},
     },
     "speak_arrival": {
         "tool": "speak",
-        "args": {"text": "我们到了，好好休息。 Here we are. Rest well."},
+        "args": {"text": voice_presets.SPEAK_ARRIVAL},
     },
     "speak_farewell": {
         "tool": "speak",
-        "args": {
-            "text": (
-                "别太累了，记得休息。再见！ "
-                "Please remember to rest. Goodbye!"
-            )
-        },
+        "args": {"text": voice_presets.SPEAK_FAREWELL},
     },
     "speak_greeting": {
         "tool": "speak",
-        "args": {"text": "你好，我是守夜犬。 Hello, I'm Night Watch."},
+        "args": {"text": voice_presets.SPEAK_GREETING},
     },
 }
 
@@ -623,6 +603,7 @@ class LatestFrameRobotWebInterface(RobotWebInterface):
         self._status_refresh_started_at = 0.0
         self._status_refresh_generation = 0
         self._status_abandoned_generations: set[int] = set()
+        self._latest_stream_capture_ts = 0.0
         # FastAPIServer creates one global Queue per text stream. Multiple SSE
         # clients then race to consume it, so whichever tab/test reads first
         # steals the robot's answer from every other operator. Dispose that
@@ -780,6 +761,15 @@ class LatestFrameRobotWebInterface(RobotWebInterface):
                 cache_at,
                 now_monotonic=now,
             )
+            # Video capture timestamps arrive in this process on every frame,
+            # independently of the slower robot/world status RPC cache.
+            # Prefer that live value so the operator's camera-latency metric
+            # does not lag one full status-poll cycle behind the image.
+            live_capture_ts = getattr(self, "_latest_stream_capture_ts", 0.0)
+            if live_capture_ts > 0.0:
+                cached["camera_age_ms"] = max(
+                    0.0, (time.time() - live_capture_ts) * 1000.0
+                )
         return cached, ready
 
     def _refresh_operator_status(self, generation: int) -> None:
@@ -918,18 +908,19 @@ class LatestFrameRobotWebInterface(RobotWebInterface):
         )
         if not ok:
             raise ValueError("Could not JPEG-encode camera frame")
+        self._latest_stream_capture_ts = float(capture_ts)
         return buffer.tobytes(), float(capture_ts)
 
     def stream_generator(self, key: str):  # type: ignore[no-untyped-def]
         def generate():  # type: ignore[no-untyped-def]
+            # Each browser gets its own one-slot queue and subscription.  The
+            # stock server stores both by stream key, so opening a second tab
+            # disposes the first tab's subscription and leaves it frozen on
+            # its last frame.  Per-client state keeps fan-out independent
+            # while the shared encoded observable still performs one JPEG
+            # encode for all concurrent clients.
             frame_queue: Queue[Any] = Queue(maxsize=1)
-            self.stream_queues[key] = frame_queue
-
-            if key in self.stream_disposables:
-                self.stream_disposables[key].dispose()
-
             disposable = SingleAssignmentDisposable()
-            self.stream_disposables[key] = disposable
             self.disposables.add(disposable)
 
             if key in self.active_streams:
@@ -1221,16 +1212,6 @@ class NightwatchWebInput(WebInput):
             )
         except Exception:
             status["navigation"] = "unavailable"
-        capture_ts = getattr(self, "_last_camera_capture_ts", 0.0)
-        # Kept private by ``_project_cached_status``. This lets the lightweight
-        # HTTP path calculate a live age even if a later optional status RPC
-        # blocks the background refresh thread indefinitely.
-        status["_camera_capture_ts"] = capture_ts
-        status["camera_age_ms"] = (
-            max(0.0, (time.time() - capture_ts) * 1000.0)
-            if capture_ts
-            else None
-        )
         now = time.monotonic()
         if now - getattr(self, "_world_status_checked_at", 0.0) >= 5.0:
             try:
@@ -1244,6 +1225,20 @@ class NightwatchWebInput(WebInput):
             status.update(self._follow.person_memory_status())
         except Exception:
             logger.exception("Operator person-memory status failed")
+        # Read camera freshness last. Optional world/person RPCs above may
+        # take hundreds of milliseconds; sampling before them made the UI
+        # report their RPC latency as camera latency even while fresh frames
+        # were arriving continuously.
+        capture_ts = getattr(self, "_last_camera_capture_ts", 0.0)
+        # Kept private by ``_project_cached_status``. This lets the lightweight
+        # HTTP path calculate a live age even if a later optional status RPC
+        # blocks the background refresh thread indefinitely.
+        status["_camera_capture_ts"] = capture_ts
+        status["camera_age_ms"] = (
+            max(0.0, (time.time() - capture_ts) * 1000.0)
+            if capture_ts
+            else None
+        )
         return status
 
     @rpc

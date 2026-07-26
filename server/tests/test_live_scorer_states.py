@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 import numpy as np
 import websockets
-
 from app.services.live_scorer import LiveScoreSource
 
 _FRAME = np.zeros((48, 64, 3), dtype=np.uint8)
@@ -93,6 +92,41 @@ def test_display_analysis_is_always_on_by_default() -> None:
                 frame = source.latest()
                 assert frame.person_id == "track-1"
                 assert frame.sequence >= 1
+            finally:
+                await source.stop()
+
+    asyncio.run(scenario())
+
+
+def test_model_annotated_frame_stays_paired_with_its_capture() -> None:
+    async def scenario() -> None:
+        annotated_jpeg = b"\xff\xd8model-overlay\xff\xd9"
+        capture_ts = time.time() - 0.125
+
+        async def annotated_echo(ws: websockets.ServerConnection) -> None:
+            await ws.send(json.dumps({"type": "ready"}))
+            async for _ in ws:
+                payload = json.loads(_result_payload(7))
+                payload["annotated_frame_follows"] = True
+                await ws.send(json.dumps(payload))
+                await ws.send(annotated_jpeg)
+
+        async with _fake_model(annotated_echo) as ws_url:
+            source = LiveScoreSource(
+                ws_url=ws_url,
+                get_frame=lambda: (_FRAME, capture_ts),
+                request_annotated_frames=True,
+            )
+            await source.start()
+            try:
+                await _wait_until(
+                    lambda: source.latest_annotated_sample() is not None
+                )
+                assert source.latest_annotated_sample() == (
+                    annotated_jpeg,
+                    capture_ts,
+                )
+                assert source.latest().sequence == 7
             finally:
                 await source.stop()
 

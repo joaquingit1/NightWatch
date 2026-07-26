@@ -1,11 +1,11 @@
 """UnitreeSkillContainer that returns the Go2 to a locomotion-ready FSM.
 
-The WebRTC velocity path emulates the wireless controller.  Packets continue
-to be accepted while the Go2 is left in a gesture/posture state, but firmware
-silently ignores them.  DimensionalOS' hosted teleop solves this with its
-StandReady sequence:
+Nightwatch uses the Go2 firmware's MCF sport ``Move`` API. Packets continue to
+be accepted while the Go2 is left in a gesture/posture state, but firmware
+silently ignores them. The MCF contract exits ``Pose`` with ``StopMove``;
+``Pose(False)`` is not the documented exit operation:
 
-    StandUp -> settle -> RecoveryStand -> BalanceStand -> SwitchJoystick(True)
+    StopMove -> StandUp -> settle -> RecoveryStand -> BalanceStand
 
 The old Nightwatch helper omitted RecoveryStand, waited too little after
 StandUp, ignored every response, and then logged "Motion re-armed" even when
@@ -38,15 +38,11 @@ logger = setup_logger()
 _READY_TTL_S = 5.0 * 60.0
 _last_ready: list[float] = [0.0]
 
-# Firmware pose mode (SPORT_CMD["Pose"]) is the single most dangerous latch on
-# this robot: while it is on, the Go2 adjusts body attitude but IGNORES every
-# gait/velocity command, so the dog "moves its joints and torso" and refuses to
-# walk. The sleep scan enters it deliberately to aim the camera up. A restore
-# that is merely SENT is not enough: a WebRTC drop, a rejected ack, or a
-# process/scan interruption in that window leaves the firmware latched with no
-# retry (observed live 2026-07-25: freeze ~30 s after boot, cleared only by a
-# power cycle). Therefore pose mode is tracked state here, cleared only when
-# the firmware acknowledges, and re-cleared by every motion path until it does.
+# Firmware pose mode is a dangerous latch on this robot: while it is on, the
+# Go2 adjusts body attitude but ignores gait/velocity commands, exactly matching
+# the live "joints and torso move, feet do not" failure. Nightwatch must never
+# enter it. The flag remains only so an older in-flight scan can be recovered
+# during a rolling process upgrade.
 _pose_mode_on: list[bool] = [False]
 
 
@@ -55,33 +51,35 @@ def pose_mode_latched() -> bool:
     return _pose_mode_on[0]
 
 
-def clear_pose_mode(connection: Any) -> bool:
+def clear_pose_mode(connection: Any, force: bool = False) -> bool:
     """Idempotently leave pose mode so velocity commands work again.
 
     Safe to call at any time; a no-op when pose mode was never entered. The
     tracked flag is cleared ONLY on a firmware acknowledgement, so a dropped
     or rejected command leaves it set and the next caller retries.
     """
-    if not _pose_mode_on[0]:
+    if not _pose_mode_on[0] and not force:
         return True
     try:
         topic = RTC_TOPIC["SPORT_MOD"]
-        connection.publish_request(
-            topic,
-            {"api_id": SPORT_CMD["Euler"], "parameter": {"x": 0.0, "y": 0.0, "z": 0.0}},
-        )
         response = connection.publish_request(
-            topic, {"api_id": SPORT_CMD["Pose"], "parameter": {"data": False}}
+            topic, {"api_id": SPORT_CMD["StopMove"]}
         )
         if not _request_succeeded(response):
             logger.warning(
-                "pose mode exit was not acknowledged; will retry",
+                "MCF StopMove pose exit was not acknowledged; will retry",
                 response=repr(response)[:200],
             )
             return False
-        connection.publish_request(
+        balance_response = connection.publish_request(
             topic, {"api_id": SPORT_CMD["BalanceStand"]}
         )
+        if not _request_succeeded(balance_response):
+            logger.warning(
+                "BalanceStand after pose exit was not acknowledged; will retry",
+                response=repr(balance_response)[:200],
+            )
+            return False
     except Exception:
         logger.exception("pose mode exit failed; will retry")
         return False
@@ -109,6 +107,16 @@ def _request_succeeded(response: Any) -> bool:
         nested_code = data.get("code")
         if isinstance(nested_code, int) and nested_code != 0:
             return False
+        # unitree_webrtc_connect wraps firmware status here. The previous
+        # parser missed this path and treated live status 7004 (unsupported
+        # motion mode) as success because the outer response dict was truthy.
+        header = data.get("header")
+        if isinstance(header, dict):
+            nested_status = header.get("status")
+            if isinstance(nested_status, dict):
+                firmware_code = nested_status.get("code")
+                if isinstance(firmware_code, int) and firmware_code != 0:
+                    return False
     return True
 
 
@@ -142,39 +150,38 @@ def ensure_motion_ready(connection: Any, force: bool = False) -> bool:
                 )
             return ok
 
-        # This intentionally mirrors dimos.teleop.hosted.go2_command StandReady.
+        # MCF's documented exit from Pose is StopMove, not Pose(False). Always
+        # attempt it because firmware state can outlive this process. A Go2
+        # that is already lying down returns status -1 ("nothing to stop"),
+        # though, and DimOS' stock StandReady contract starts directly with
+        # StandUp. Do not let that benign precondition response prevent the
+        # actual, fully acknowledged stand sequence from running.
+        stopmove_ok = step("StopMove")
+        if not stopmove_ok:
+            logger.warning(
+                "Go2 StopMove precondition was rejected; continuing with "
+                "the standard StandUp recovery sequence"
+            )
         if not step("StandUp"):
             return False
         time.sleep(3.0)
         if not step("RecoveryStand"):
             return False
         time.sleep(0.3)
-        # Leave firmware pose mode if anything latched it (a dropped sleep-scan
-        # restore, a partial tilt). In pose mode the Go2 moves joints but
-        # ignores every gait/velocity command, so re-arming motion MUST clear
-        # it. Idempotent and harmless when pose mode is already off.
-        step("Pose", parameter={"data": False})
-        time.sleep(0.2)
         if not step("BalanceStand"):
             return False
-        time.sleep(0.3)
-        if not step("SwitchJoystick", parameter={"data": True}):
-            return False
+        # A completed StandUp/RecoveryStand/BalanceStand sequence necessarily
+        # supersedes any stale body-pose FSM state.
+        _pose_mode_on[0] = False
         _last_ready[0] = time.monotonic()
         logger.info(
-            "Motion re-armed "
-            "(StandUp + RecoveryStand + BalanceStand + SwitchJoystick on)"
+            "MCF motion re-armed "
+            "(StopMove + StandUp + RecoveryStand + BalanceStand)"
         )
         return True
     except Exception:
         logger.exception("ensure_motion_ready failed")
         return False
-
-
-# Body tilt is bounded so a facial-analysis camera raise can never command a
-# posture that unbalances the Go2. 0.4 rad (~23 deg) up is plenty to lift the
-# front camera onto a standing person's face at ~1.2 m.
-_MAX_BODY_PITCH_RAD = 0.4
 
 
 def wave_hello(connection: Any) -> bool:
@@ -184,7 +191,7 @@ def wave_hello(connection: Any) -> bool:
 
     A wave only counts when the firmware acknowledges it. The Go2 silently
     ignores sport gestures unless it is standing in a locomotion-ready FSM, so
-    we re-arm first (StandUp -> RecoveryStand -> BalanceStand -> joystick) and
+    we re-arm first (StopMove -> StandUp -> RecoveryStand -> BalanceStand) and
     then publish the Hello routine (SPORT_CMD["Hello"] == 1016, parameterless).
     A blocked or rejected wave returns False so the caller can re-arm and retry
     without counting it as a real wave.
@@ -209,67 +216,19 @@ def wave_hello(connection: Any) -> bool:
 
 
 def set_body_pitch(connection: Any, pitch_rad: float) -> bool:
-    """Tilt the body (and thus the front camera) up via the Euler sport command.
+    """Refuse body-pose changes; Nightwatch must never lower/tilt the hips.
 
-    connection: anything with publish_request(topic, data) (GO2ConnectionSpec).
-
-    The Go2 exposes a body-orientation command, SPORT_CMD["Euler"] == 1007,
-    whose parameter is a body-frame roll/pitch/yaw triple ``{"x", "y", "z"}``
-    (the same {x, y, z} envelope the Move command uses in
-    ``dimos.robot.unitree.connection._publish_movement``). We only touch pitch:
-    ``(0, pitch, 0)``. A positive pitch raises the nose, lifting the front
-    camera onto a standing person's face for the facial-analysis pipeline.
-
-    Pitch is clamped to +/- 0.4 rad for balance safety. Restore the neutral
-    pose with ``set_body_pitch(connection, 0.0)``. Caller is responsible for
-    having the robot standing (BalanceStand); this helper only publishes the
-    orientation command and verifies the ack.
+    A non-zero request is reported as unavailable without sending anything to
+    the firmware. A zero request is cleanup from older scan code and uses only
+    the ordinary MCF StopMove/BalanceStand recovery path.
     """
-    pitch = max(-_MAX_BODY_PITCH_RAD, min(_MAX_BODY_PITCH_RAD, float(pitch_rad)))
-    try:
-        topic = RTC_TOPIC["SPORT_MOD"]
-
-        def send(name: str, parameter: dict[str, Any]) -> bool:
-            response = connection.publish_request(
-                topic, {"api_id": SPORT_CMD[name], "parameter": parameter}
-            )
-            ok = _request_succeeded(response)
-            if not ok:
-                logger.warning(
-                    "set_body_pitch: firmware rejected a pose step",
-                    step=name,
-                    pitch=pitch,
-                    response=repr(response)[:200],
-                )
-            return ok
-
-        if pitch != 0.0:
-            # The firmware ACKs Euler in normal locomotion mode but does not
-            # apply it visibly; body-attitude adjustment requires pose mode
-            # (SPORT_CMD Pose, flag on). Observed live 2026-07-25: every sleep
-            # scan logged camera_raised=true while the body never moved.
-            if not send("Pose", {"data": True}):
-                return False
-            # Mark the latch BEFORE the tilt: from this moment the firmware may
-            # be in pose mode, and every exit path must be able to see that.
-            _pose_mode_on[0] = True
-            if send("Euler", {"x": 0.0, "y": pitch, "z": 0.0}):
-                return True
-            # CRITICAL rollback: in pose mode the Go2 ignores every gait and
-            # velocity command. A tilt failure after Pose(on) must never leave
-            # pose mode latched, or the dog only moves joints until a power
-            # cycle (observed live twice, 2026-07-25).
-            clear_pose_mode(connection)
-            return False
-
-        # Restore: neutral attitude, leave pose mode, re-latch BalanceStand so
-        # velocity navigation resumes on a normal stance. clear_pose_mode keeps
-        # the latch flag set unless the firmware acknowledges, so a dropped
-        # restore is retried by the supervisor and by the next re-arm.
-        return clear_pose_mode(connection)
-    except Exception:
-        logger.exception("set_body_pitch publish failed")
+    if abs(float(pitch_rad)) > 1e-6:
+        logger.warning(
+            "body-pitch request refused; posture changes are disabled",
+            requested_pitch_rad=float(pitch_rad),
+        )
         return False
+    return clear_pose_mode(connection, force=True)
 
 
 class UnitreeSkillContainer(_StockUnitreeSkillContainer):

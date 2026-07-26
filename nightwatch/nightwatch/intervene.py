@@ -32,6 +32,7 @@ import time
 from types import SimpleNamespace
 from typing import Any, Callable, Protocol
 
+import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -51,7 +52,7 @@ from dimos.navigation.navigation_spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
-from nightwatch.unitree import ensure_motion_ready, set_body_pitch, wave_hello
+from nightwatch.unitree import ensure_motion_ready, wave_hello
 
 logger = setup_logger()
 
@@ -954,7 +955,9 @@ class InterventionSkill(Module):
         result = self._run_protocol(
             find_subject=find_subject,
             approach=self._approach,
-            set_pitch=lambda pitch: set_body_pitch(self._connection, pitch),
+            # Body-pose commands are intentionally disabled. They can latch
+            # MCF into a posture state that moves joints but rejects walking.
+            set_pitch=lambda _pitch: True,
             waver=lambda: wave_hello(self._connection),
             gaze_check=lambda: check_gaze(
                 lambda: self._gaze_sample(subject_track["id"]),
