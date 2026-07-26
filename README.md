@@ -1,5 +1,11 @@
 # 守夜犬 Night Watch
 
+
+https://github.com/user-attachments/assets/3ca6159e-b8d4-472a-b221-4b7bbcef646d
+
+<img width="1600" height="640" alt="img1" src="https://github.com/user-attachments/assets/8200344b-3271-4ae0-a3ab-3474ec964d0e" />
+
+
 ## 赛道问答 / Track Q&A
 
 > 以下问题是比赛赛道的提交要求，在文档最前面统一回答。
