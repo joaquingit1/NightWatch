@@ -1179,7 +1179,13 @@ class WavefrontFrontierExplorer(_StockWavefrontFrontierExplorer):
     # behind it. Chair gaps, wall slivers, and scanned rooms must not be
     # re-released merely because every better frontier is exhausted.
     _starvation_reopen_unknown_score = 0.25
-    # Strike-based session-permanent blacklist. Time-based visit/failure TTLs
+    # Strike-based session-permanent blacklist. Occupancy mapping is
+    # structurally blind to glass: the beam passes through the pane, so the
+    # wall reads as free space with unresolvable unknown behind it. Reliable
+    # glass detection needs lidar return intensity or an extra perception
+    # channel (TOPGN, arXiv:2408.05608), and the Go2's compressed voxel
+    # stream exposes no intensity, so the mitigation lives here at the
+    # navigation layer instead. Time-based visit/failure TTLs
     # cannot stop an unresolvable "honeypot" frontier: a glass window lidar sees
     # through (the unknown behind it never resolves) so the dog returns every
     # time the 240 s visit or 180 s failure TTL expires, and a chair cluster

@@ -1,9 +1,7 @@
 # Nightwatch repository rules
 
 These instructions apply to every agent and every file in this repository,
-except where a more specific `AGENTS.md` adds stricter rules. Read
-`nightwatch/LESSONS-2026-07-24.md` before changing robot behavior, navigation,
-mapping, perception, streaming, operator controls, or the interaction pipeline.
+except where a more specific `AGENTS.md` adds stricter rules.
 
 ## Non-negotiable product invariants
 
@@ -21,10 +19,12 @@ mapping, perception, streaming, operator controls, or the interaction pipeline.
    an owner, reason, start time, hard deadline, and next transition. Outside an
    intentional sleep scan or human interaction, unexpected lack of progress
    must trigger recovery in at most 10 seconds.
-5. **Sleep scans are bounded exceptions.** A sleep scan may stop the dog and
-   lower its rear to aim the camera upward only in Sleep Analysis mode. It must
-   retain the route goal and restore stance/resume on timeout, no detection,
-   mode change, manual takeover, disconnect, or error.
+5. **Sleep scans never change body pose.** A sleep scan may stop the dog only
+   in Sleep Analysis mode, but it must keep the normal balanced stance and
+   fixed camera. Never lower the rear or send Unitree `Pose`/`Euler` commands:
+   that firmware sub-state accepts commands while suppressing gait velocity.
+   Retain the route goal and resume on timeout, no detection, mode change,
+   manual takeover, disconnect, or error.
 6. **Do not invent hardware commands.** Check the local `dimos` source and the
    installed Unitree WebRTC driver before using a robot action or topic. Test
    uncertain contracts with a fake transport. Never probe an uncertain action

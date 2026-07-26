@@ -1,0 +1,79 @@
+# Runs everything that works on a hosted runner: the policy API tests, the
+# fatigue service tests (real YOLOv8-face + MediaPipe inference against the
+# tracked model weights), and the web client production build.
+#
+# The nightwatch/ robot regression suite is intentionally NOT run here: it
+# imports the sibling DimensionalOS checkout (dimos/, not tracked in this
+# repository) and Go2-specific environments that hosted runners cannot
+# provide. Run it locally with the commands in nightwatch/README.md.
+name: CI
+
+on:
+  push:
+    branches: [main, integration]
+  pull_request:
+
+jobs:
+  server-tests:
+    name: Policy API tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: server/requirements*.txt
+      - name: Install dependencies
+        run: pip install -r server/requirements.txt -r server/requirements-dev.txt
+      - name: Run tests
+        # From server/ so `import app` resolves without installing the package.
+        run: python -m pytest -q tests
+        working-directory: server
+
+  fatigue-tests:
+    name: Fatigue service tests
+    runs-on: ubuntu-latest
+    env:
+      FATIGUE_DEVICE: cpu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: fatigue_fastapi_service/requirements*.txt
+      - name: Install MediaPipe system libraries
+        # mediapipe dlopens libGLESv2 even for CPU inference on Linux.
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libgles2 libegl1
+      - name: Install CPU-only PyTorch
+        # Before ultralytics, so pip does not pull the multi-gigabyte CUDA build.
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install dependencies
+        run: >
+          pip install
+          -r fatigue_fastapi_service/requirements.txt
+          -r fatigue_fastapi_service/requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest -q fatigue_fastapi_service/tests
+
+  client-build:
+    name: Web client build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          # pnpm 11 requires Node 22.13+.
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: client
+      - name: Build
+        run: pnpm build
+        working-directory: client

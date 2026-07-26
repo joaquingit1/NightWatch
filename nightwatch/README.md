@@ -59,9 +59,6 @@ Covering more than 60% of the camera with a hand for three sampled frames
 queues one safe expression. The queue waits for the active navigation leg to
 finish naturally, so it never cancels a path or clears frontier history.
 
-See [DimensionalOS opportunities](DIMENSIONALOS-OPPORTUNITIES.md) for the
-ranked platform-capability audit and integration order.
-
 ## Saved maps and memory
 
 Each run records throttled LiDAR snapshots plus odometry to:
@@ -90,10 +87,6 @@ dimos/assets/output/memory/nightwatch_experience.db
 dimos/assets/output/memory/nightwatch_world.sqlite3
 dimos/assets/output/memory/person_identity.sqlite3
 ```
-
-See [capabilities 1–4 implementation and validation](IMPLEMENTATION-PLAN.md)
-for marker IDs, self-tagging evidence gates, failure adaptation, person-memory
-privacy rules, and the safe rollout sequence.
 
 The exporter uses rolling-window replacement. The Go2 WebRTC LiDAR topic is a
 complete 6.4 m voxel snapshot, not a raw scan; replacing the current window

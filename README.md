@@ -35,11 +35,11 @@ The full vision is an emotional-support robot dog; this demo implements its slee
 
 用到的 DimOS 能力：Go2 WebRTC 连接与运动控制；导航栈（LiDAR 体素建图、A* 规划与 costmap、frontier 探索、点击导航）；感知（相机流、YOLO 人体检测与跟踪、CLIP 空间记忆嵌入）；记忆（SpatialMemory 语义地图与地点标注、地图导出）；技能框架与 MCP 工具链，接入 LLM Agent（OpenAI gpt-4o）驱动对话与技能调用；rerun 遥测可视化。
 
-自己额外写的（`nightwatch/`、`server/`、`client/`）：Curiosity 行为监督器（自主 / 睡眠分析 / 手动三模式编排、好奇跟随、拟犬手势）；人脸疲劳评分服务与策略桥（RestScore、门控、护送评分）；不可打断的护送技能（最近休息区、到达判定）；QR/NFC 问卷与签名令牌绑定、操作员收件箱与确认弹窗；双语操作工作台（遥操作、LIDAR 三维页、语音按钮）与公网表单隧道部署；中英混合自然语音链（kokoro 优先、edge-tts、`say` 兜底、预合成 wav 缓存）；以及一批可靠性改造（地图持久化与 ICP 重定位共识、用 YOLO 替代需要 CUDA 的 EdgeTAM 跟踪器、Go2 运动使能修复、Agent 异常自愈）。
+自己额外写的（`nightwatch/`、`server/`、`client/`）：Curiosity 行为监督器（自主 / 睡眠分析 / 手动三模式编排、好奇跟随、拟犬手势）；人脸疲劳评分服务与策略桥（RestScore、门控、护送评分）；不可打断的护送技能（最近休息区、到达判定）；QR/NFC 问卷与签名令牌绑定、操作员收件箱与确认弹窗；双语操作工作台（遥操作、LIDAR 三维页、语音按钮）与公网表单隧道部署；中英混合自然语音链（kokoro 优先、edge-tts、`say` 兜底、预合成 wav 缓存）；以及一批可靠性改造（玻璃「蜜罐」自动拉黑导航层（LIDAR 看不见玻璃，详见下文专章）、地图持久化与 ICP 重定位共识、用 YOLO 替代需要 CUDA 的 EdgeTAM 跟踪器、Go2 运动使能修复、Agent 异常自愈）。
 
 DimOS capabilities we used: the Go2 WebRTC connection and motion control; the navigation stack (LiDAR voxel mapping, A* planning with costmaps, frontier exploration, click-to-navigate); perception (camera streaming, YOLO person detection and tracking, CLIP embeddings for spatial memory); memory (SpatialMemory semantic mapping and place tagging, map export); the skill framework and MCP toolchain with an LLM agent (OpenAI gpt-4o) driving conversation and skill calls; and rerun telemetry visualization.
 
-What we wrote ourselves (`nightwatch/`, `server/`, `client/`): the Curiosity behavior supervisor (orchestrating autonomous, sleep-analysis, and manual modes, curious following, dog-like gestures); the facial fatigue scoring service and policy bridge (RestScore, gating, escort scoring); the uninterruptible escort skill (nearest rest area, arrival detection); the QR/NFC questionnaire with signed-token binding plus the operator inbox and confirmation dialogs; the bilingual operator workbench (teleoperation, 3D LiDAR page, voice buttons) and the public form tunnel deployment; the bilingual natural-voice TTS chain (kokoro first, edge-tts, `say` fallback, pre-synthesized wav cache); and a set of reliability fixes (map persistence with ICP relocalization consensus, a YOLO tracker replacing the CUDA-only EdgeTAM, Go2 motion-enable repair, agent error self-healing).
+What we wrote ourselves (`nightwatch/`, `server/`, `client/`): the Curiosity behavior supervisor (orchestrating autonomous, sleep-analysis, and manual modes, curious following, dog-like gestures); the facial fatigue scoring service and policy bridge (RestScore, gating, escort scoring); the uninterruptible escort skill (nearest rest area, arrival detection); the QR/NFC questionnaire with signed-token binding plus the operator inbox and confirmation dialogs; the bilingual operator workbench (teleoperation, 3D LiDAR page, voice buttons) and the public form tunnel deployment; the bilingual natural-voice TTS chain (kokoro first, edge-tts, `say` fallback, pre-synthesized wav cache); and a set of reliability fixes (the glass-honeypot self-blacklisting navigation layer described in its own section below, map persistence with ICP relocalization consensus, a YOLO tracker replacing the CUDA-only EdgeTAM, Go2 motion-enable repair, agent error self-healing).
 
 **人工介入的程度：哪些是遥控的，哪些是自主的 / Human intervention: what is teleoperated, what is autonomous**
 
@@ -77,12 +77,6 @@ The current implementation can register arrival at the rest area and show a visi
 
 Built for [AdventureX 2026](https://adventurex.org) · Theme: **Reverse** · `#adventurex2026`
 
-> 想先了解产品理念、人文关怀和访客体验，请阅读
->
-> Read the product story, human-centered principles, and visitor experience first:
->
-> [《守夜犬：产品故事》 / Night Watch: Product Story](PRODUCT_STORY.md)
-
 ---
 
 ## 目录 / Contents
@@ -90,6 +84,7 @@ Built for [AdventureX 2026](https://adventurex.org) · Theme: **Reverse** · `#a
 - [赛道问答 / Track Q&A](#赛道问答--track-qa)
 - [当前实现与能力边界 / Current implementation and boundaries](#当前实现与能力边界--current-implementation-and-boundaries)
 - [当前体验闭环 / Current experience loop](#当前体验闭环--current-experience-loop)
+- [看不见的玻璃 / Finding glass that LIDAR cannot see](#看不见的玻璃--finding-glass-that-lidar-cannot-see)
 - [页面入口 / Application pages](#页面入口--application-pages)
 - [疲劳风险如何计算 / How fatigue risk is calculated](#疲劳风险如何计算--how-fatigue-risk-is-calculated)
 - [系统架构 / System architecture](#系统架构--system-architecture)
@@ -146,6 +141,31 @@ The form asks only how alert the visitor feels and whether guidance is wanted. T
 
 ---
 
+## 看不见的玻璃 / Finding glass that LIDAR cannot see
+
+现场演示里最危险的障碍不是墙，而是玻璃。激光雷达的光束会直接穿过透明表面，返回信号极弱甚至没有，所以在占据栅格地图里，玻璃幕墙看起来是一片可以通行的自由空间，后面还跟着一大块诱人的未知区域。透明障碍物检测研究（TOPGN，[arXiv:2408.05608](https://arxiv.org/abs/2408.05608)）指出，可靠识别玻璃通常需要处理激光点云的反射强度或引入额外的感知通道，而 Go2 通过 WebRTC 下发的压缩体素地图恰恰不携带强度信息。结果是一个「蜜罐」：frontier 探索的评分最偏爱未知区域，而玻璃后面的未知永远无法被消解，机器狗会一次又一次走向同一面窗。
+
+The most dangerous obstacle in a live venue is not a wall, it is glass. LIDAR beams pass straight through transparent surfaces and return little or no signal, so in an occupancy map a glass wall reads as traversable free space with a tempting pool of unknown territory behind it. Transparent-obstacle research (TOPGN, [arXiv:2408.05608](https://arxiv.org/abs/2408.05608)) shows that reliably detecting glass generally requires intensity-aware processing of the lidar point cloud or an additional perception channel, and the compressed voxel map the Go2 publishes over WebRTC carries no intensity data at all. The result is a honeypot: frontier scoring rewards unknown area, the unknown behind a pane can never be resolved, and the dog walks into the same window again and again.
+
+传感器层解决不了，我们就在导航层自研了一套「玻璃自动拉黑」机制（[`nightwatch/nightwatch/navigation.py`](nightwatch/nightwatch/navigation.py)）：
+
+Since the sensor layer cannot solve this, we built an in-house self-blacklisting layer inside navigation ([`nightwatch/nightwatch/navigation.py`](nightwatch/nightwatch/navigation.py)):
+
+1. **到达未消解即记违例 / Arrival-without-resolution strikes.** 真正的 frontier 会在机器人到达后被激光扫掉：目标周围的未知栅格坍缩为已知。如果一次「成功」的行程结束后未知区域仍然完好，这就是玻璃的签名（激光穿过玻璃，窗后的未知永远不会清除），该目标记一次违例；规划器硬失败且未知未消解时直接记满违例。<br>
+   A real frontier resolves on arrival: the lidar sweep collapses the unknown cells around the goal. A goal that terminates with its unknown mass intact is the glass signature (the beam passes through, so the unknown behind the pane never clears) and earns a strike. A hard planner failure with unresolved unknown strikes out immediately.
+2. **三振出局 / Strike-out blacklist.** 同一 1.5 m 区域累计三次违例后，整个会话永久拉黑。基于时间的黑名单会过期然后让机器狗折返，而窗户永远是窗户。<br>
+   Three strikes in the same 1.5 m region blacklist it for the rest of the session. Time-based blacklists expire and invite the dog back; the window never stops being a window.
+3. **持久 keep-out / Persistent keep-outs.** 玻璃区域以地图坐标写入 keep-out 文件，跨进程重启保留，探索和巡逻共同强制执行；在重定位锁定之前保持休眠，避免坐标漂移误伤。<br>
+   Glass zones are persisted in the map frame, survive restarts, and are enforced by exploration and patrol alike. They stay dormant until relocalization locks, so a drifting frame cannot misplace them.
+4. **出生点只出不进 / One-way egress at the boot pose.** 现场机器人恰好在玻璃幕墙旁边开机，所以会话起点被当作出口而不是目的地：一旦离开，任何朝出生点回退的目标都会被拒绝。<br>
+   The robot powers on beside the venue's glass wall, so the session origin is treated as an exit, never a destination: once the dog leaves, goals that move back toward the boot pose are rejected.
+
+效果是：不添加任何传感器，一面玻璃墙在最多一两次接触后就会自己进入黑名单，此后探索、巡逻和护送都会绕开它。相关行为由 `nightwatch/tests/` 中的回归测试固定。
+
+The net effect: with no additional sensor, a glass wall blacklists itself after at most a couple of contacts, and exploration, patrol, and escort all route around it from then on. The behavior is pinned by regression tests in `nightwatch/tests/`.
+
+---
+
 ## 页面入口 / Application pages
 
 启动客户端和策略 API 后，可以访问以下页面。
@@ -154,13 +174,11 @@ Once the client and policy API are running, the following pages are available.
 
 | 地址 / URL | 中文 | English |
 | --- | --- | --- |
-| `http://localhost:3000/` | 双语产品主页 | Bilingual product landing page |
-| `http://localhost:3000/booth` | 实时疲劳分析、思考流、引导队列、路线和 care ledger | Live fatigue analysis, thought stream, escort queue, route, and care ledger |
+| `http://localhost:3000/` | 展台控制台：实时疲劳分析、思考流、引导队列、路线和 care ledger | Booth console: live fatigue analysis, thought stream, escort queue, route, and care ledger |
 | `http://localhost:3000/form` | 手机端休息问卷；也支持带 `?s=<session_id>` 的固定二维码 | Mobile rest intake; also supports fixed QR URLs with `?s=<session_id>` |
 | `http://localhost:3000/lidar` | 三维地图、机器人视角和唯一 `Bedroom` 标定 | 3D map, robot-eye view, and single-`Bedroom` calibration |
+| `http://localhost:3000/first-person` | 机器人相机全屏第一视角 | Full-screen live view from the robot camera |
 | `http://127.0.0.1:5555/operator` | Go2 双语操作台；只有机器人栈运行时可用 | Bilingual Go2 operator workbench; available only while the robot stack is running |
-
-![守夜犬产品主页 / Night Watch landing page](./docs/images/landing-home.png)
 
 ---
 
@@ -199,7 +217,7 @@ flowchart TB
     Camera["摄像头输入<br/>Webcam · Insta360 · Go2 camera"] --> API["策略 API :8000<br/>Policy API"]
     API --> Fatigue["本地疲劳服务 :8001<br/>Local fatigue service"]
     Fatigue --> API
-    API --> Client["Next.js :3000<br/>Landing · Booth · Form · LiDAR"]
+    API --> Client["Next.js :3000<br/>Booth · Form · LiDAR · First-person"]
     Client --> API
 
     API --> Ledger["内存 Care Ledger<br/>In-memory care ledger"]
@@ -222,7 +240,7 @@ The three user-space services can run independently:
 
 | 服务 / Service | 路径 / Path | 端口 / Port | 职责 / Role |
 | --- | --- | ---: | --- |
-| **Web 客户端 / Web client** | `client/` | 3000 | 产品主页、展台、问卷、三维地图 / Landing, booth, intake, and 3D map |
+| **Web 客户端 / Web client** | `client/` | 3000 | 展台、问卷、三维地图、第一视角 / Booth, intake, 3D map, and first-person view |
 | **策略 API / Policy API** | `server/` | 8000 | 摄像头输入、care loop、问卷、ledger、机器人桥和 UI 接口 / Camera input, care loop, intake, ledger, robot bridge, and UI APIs |
 | **疲劳检测 / Fatigue detection** | `fatigue_fastapi_service/` | 8001 | YOLOv8-Face、MediaPipe 和有状态时序推理 / YOLOv8-Face, MediaPipe, and stateful temporal inference |
 
@@ -357,9 +375,9 @@ pnpm install
 pnpm dev
 ```
 
-打开 `http://localhost:3000/booth` 查看实时控制台。Next.js rewrite 代理普通 API；MJPEG、SSE 和 LiDAR WebSocket 通过 `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` 直接连接策略 API。
+打开 `http://localhost:3000/` 查看实时控制台。Next.js rewrite 代理普通 API；MJPEG、SSE 和 LiDAR WebSocket 通过 `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` 直接连接策略 API。
 
-Open `http://localhost:3000/booth` for the live console. Next.js rewrites proxy ordinary API calls; MJPEG, SSE, and the LiDAR WebSocket connect directly to the policy API through `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`.
+Open `http://localhost:3000/` for the live console. Next.js rewrites proxy ordinary API calls; MJPEG, SSE, and the LiDAR WebSocket connect directly to the policy API through `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`.
 
 ### 可选 Insta360 输入 / Optional Insta360 input
 
@@ -383,7 +401,7 @@ See the [Insta360 bridge guide](insta360_bridge/README.md) for setup details.
 ```powershell
 Invoke-WebRequest http://127.0.0.1:8001/health -UseBasicParsing
 Invoke-WebRequest http://127.0.0.1:8000/api/score -UseBasicParsing
-Invoke-WebRequest http://localhost:3000/booth -UseBasicParsing
+Invoke-WebRequest http://localhost:3000/ -UseBasicParsing
 ```
 
 ---
@@ -522,6 +540,10 @@ When `INTAKE_OPERATOR_KEY` is configured, intake status changes require `X-Intak
 
 ## 验证与测试 / Verification and tests
 
+GitHub Actions（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）在每次 push 和 PR 上运行策略 API 测试、疲劳服务测试（真实推理）和 Web 客户端构建。机器人回归测试依赖本地 DimensionalOS 环境，只在本地运行。
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the policy API tests, the fatigue service tests (real inference), and the web client build on every push and pull request. The robot regression suite depends on a local DimensionalOS environment and runs locally only.
+
 服务端和疲劳服务的测试依赖分别列在各自的 `requirements-dev.txt` 中。
 
 Server and fatigue-service test dependencies are listed in their respective `requirements-dev.txt` files.
@@ -549,12 +571,10 @@ Robot regression tests depend on the sibling DimensionalOS environment; use the 
 
 | 文档 / Document | 内容 / Contents |
 | --- | --- |
-| [产品故事 / Product story](PRODUCT_STORY.md) | 产品理念、体验、人文边界和长期愿景 / Product principles, experience, human boundaries, and long-term vision |
 | [Go2 scout](nightwatch/README.md) | 机器人启动、操作台、地图、记忆和平台边界 / Robot startup, operator workbench, maps, memory, and platform boundaries |
 | [机器人桥接契约 / Robot bridge contract](nightwatch/BRIDGE.md) | 相机、状态、assessment 和 MCP 调用约定 / Camera, status, assessment, and MCP call contracts |
 | [疲劳检测服务 / Fatigue service](fatigue_fastapi_service/README.md) | WebSocket 协议、模型配置和限制 / WebSocket protocol, model configuration, and limitations |
 | [Insta360 bridge](insta360_bridge/README.md) | Windows SDK 桥构建和相机连接 / Windows SDK bridge build and camera connection |
-| [操作台 PRD / Operator workbench PRD](prds/P11-operator-workbench-v2.zh-CN.md) | 探索/巡航、人工控制、QR/NFC 和 Bedroom 行为 / Explore/cruise, manual control, QR/NFC, and Bedroom behavior |
 | [腾讯云问卷部署 / Tencent intake deployment](deploy/tencent/README.md) | 公访问卷、Nginx、systemd 和反向同步 / Public intake, Nginx, systemd, and reverse synchronization |
 
 ---
